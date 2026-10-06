@@ -478,6 +478,11 @@ org) ∩ (creator's Jira permissions)*, so no key can do more than the person wh
 An automation in `digest/` that fetches the newest post from oasis.security/blog, summarizes it
 with Claude, and files a Jira ticket with the post's title and the summary.
 
+- **External to the UI, as the brief specifies.** The digest adds nothing to the web app: no
+  pages, buttons or status views. It is a headless job (a CLI, or a scheduled container). Its only
+  link to IdentityHub is an API key created with the existing API-keys feature, just like any
+  scanner. The alternative, calling Jira directly, would need its own Jira credentials and would
+  bypass the key's project restrictions.
 - **A separate client of the public API.** The digest is its own small project (its own
   dependencies, lock file and image) and creates the ticket through `POST /api/v1/findings` with an
   API key scoped to one project, exactly as an external scanner would. It never touches the
