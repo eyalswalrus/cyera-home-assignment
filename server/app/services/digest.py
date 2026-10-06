@@ -174,8 +174,14 @@ async def eligible_projects(
 
 
 async def set_subscriptions(
-    db: AsyncSession, user: User, settings: Settings, runtime: DigestRuntime, project_keys: list[str]
-) -> None:
+    db: AsyncSession,
+    user: User,
+    settings: Settings,
+    runtime: DigestRuntime,
+    project_keys: list[str],
+    send_latest_now: bool = False,
+) -> bool:
+    """Replace the user's subscriptions. Returns True if new projects asked for the latest post now."""
     if len(project_keys) > MAX_SUBSCRIPTIONS:
         raise DigestProjectsNotEligible(f"You can subscribe at most {MAX_SUBSCRIPTIONS} projects.")
     if project_keys:
@@ -201,10 +207,11 @@ async def set_subscriptions(
             DigestSubscription.user_id == user.id, DigestSubscription.project_key.not_in(project_keys)
         )
     )
-    for key in project_keys:
-        if key not in existing:
-            db.add(DigestSubscription(user_id=user.id, project_key=key, project_name=mine[key]))
+    added = [key for key in project_keys if key not in existing]
+    for key in added:
+        db.add(DigestSubscription(user_id=user.id, project_key=key, project_name=mine[key], include_latest=send_latest_now))
     await db.commit()
+    return bool(added) and send_latest_now
 
 
 async def list_subscriptions(db: AsyncSession, user: User) -> list[tuple[DigestSubscription, DigestDelivery | None]]:
@@ -269,7 +276,7 @@ async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
         # Which posts each project is due: newer than its watermark and not filed there yet.
         plan: dict[str, list[BlogPost]] = {}
         for project_key, subs in subs_by_project.items():
-            watermark = await _watermark(db, project_key, subs)
+            watermark = await _watermark(db, project_key, subs, posts)
             filed_urls = set(
                 await db.scalars(
                     select(DigestPost.url).join(DigestDelivery).where(DigestDelivery.project_key == project_key)
@@ -317,14 +324,26 @@ async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
     return done(outcome, f"Problems in {', '.join(problems)}; see the subscription errors." if problems else None)
 
 
-async def _watermark(db: AsyncSession, project_key: str, subs: list[DigestSubscription]) -> datetime:
+async def _watermark(
+    db: AsyncSession, project_key: str, subs: list[DigestSubscription], posts: list[BlogPost]
+) -> datetime:
     """Posts published after this are due in the project: the newest post already filed there, or
     (fresh start) when the project's current subscriptions began, whichever is later."""
-    subscribed_since = min(s.created_at for s in subs)
+    subscribed_since = min(_starts_from(s, posts) for s in subs)
     last_filed = await db.scalar(
         select(func.max(DigestPost.published_at)).join(DigestDelivery).where(DigestDelivery.project_key == project_key)
     )
     return max(subscribed_since, last_filed) if last_filed else subscribed_since
+
+
+def _starts_from(sub: DigestSubscription, posts: list[BlogPost]) -> datetime:
+    """Fresh start: posts published after subscribing. With "send the latest post now", also the
+    newest post that existed at that moment."""
+    if sub.include_latest:
+        earlier = [p.published for p in posts if p.published <= sub.created_at]
+        if earlier:
+            return max(earlier) - timedelta(microseconds=1)
+    return sub.created_at
 
 
 async def _summaries(

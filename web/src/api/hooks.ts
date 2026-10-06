@@ -216,8 +216,12 @@ export function useDigest() {
 export function useSetDigestSubscriptions() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (projectKeys: string[]) =>
-      call(api.PUT('/api/digest/subscriptions', { body: { project_keys: projectKeys } })),
+    mutationFn: ({ projectKeys, sendLatestNow }: { projectKeys: string[]; sendLatestNow: boolean }) =>
+      call(
+        api.PUT('/api/digest/subscriptions', {
+          body: { project_keys: projectKeys, send_latest_now: sendLatestNow },
+        }),
+      ),
     onSuccess: (status) => queryClient.setQueryData(keys.digest, status),
   })
 }

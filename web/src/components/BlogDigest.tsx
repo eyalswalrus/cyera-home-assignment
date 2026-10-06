@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Button, Group, Paper, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
+import { Alert, Anchor, Badge, Button, Checkbox, Group, Paper, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 import { IconAlertTriangle, IconExternalLink, IconPlayerPlay, IconRobot } from '@tabler/icons-react'
 import { useState } from 'react'
 import {
@@ -69,8 +69,10 @@ function About({ status }: { status: DigestStatus }) {
 function SubscriptionEditor({ status }: { status: DigestStatus }) {
   const saved = status.subscriptions.map((s) => s.project_key)
   const [projects, setProjects] = useState<string[]>(saved)
+  const [sendLatestNow, setSendLatestNow] = useState(false)
   const save = useSetDigestSubscriptions()
-  const changed = projects.length !== saved.length || projects.some((k) => !saved.includes(k))
+  const added = projects.filter((k) => !saved.includes(k))
+  const changed = added.length > 0 || projects.length !== saved.length
   const disabled = Boolean(status.unavailable_reason)
 
   return (
@@ -91,9 +93,21 @@ function SubscriptionEditor({ status }: { status: DigestStatus }) {
           error={save.error?.message}
         />
       )}
+      {added.length > 0 && !disabled && (
+        <Checkbox
+          label={`Also send the latest blog post to ${added.join(', ')} now`}
+          description="Otherwise new subscriptions start with the next post the blog publishes."
+          checked={sendLatestNow}
+          onChange={(event) => setSendLatestNow(event.currentTarget.checked)}
+        />
+      )}
       {changed && !disabled && (
         <Group gap="xs">
-          <Button size="xs" loading={save.isPending} onClick={() => save.mutate(projects)}>
+          <Button
+            size="xs"
+            loading={save.isPending}
+            onClick={() => save.mutate({ projectKeys: projects, sendLatestNow: sendLatestNow && added.length > 0 })}
+          >
             Save projects
           </Button>
           <Button size="xs" variant="default" onClick={() => setProjects(saved)}>

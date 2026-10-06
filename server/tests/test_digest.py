@@ -237,6 +237,33 @@ async def test_fresh_start_only_files_posts_published_after_subscribing(app, cli
     assert filed_titles(jira) == ["NHI Blog Digest: Brand new post"]
 
 
+async def subscribe_sending_latest(client, keys):
+    return await client.put(
+        "/api/digest/subscriptions", json={"project_keys": keys, "send_latest_now": True}, headers=await csrf(client)
+    )
+
+
+async def test_send_latest_now_files_just_the_latest_post_right_away(app, client, jira):
+    await connected_user(client)
+    assert (await subscribe_sending_latest(client, ["SEC"])).status_code == 200
+    await app.state.digest.task  # saving started a run
+
+    # The current latest post, not the older backlog.
+    assert filed_titles(jira) == ["NHI Blog Digest: When a Worm Steals Your Keys"]
+    assert app.state.digest.last_run.outcome == "filed 1 ticket in SEC"
+
+
+async def test_send_latest_now_only_applies_to_newly_added_projects(app, client, jira):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])  # fresh start, no backlog
+    assert app.state.digest.task is None  # no run without the option
+
+    await subscribe_sending_latest(client, ["SEC", "OPS"])
+    await app.state.digest.task
+    [request] = bot_issue_requests(jira)
+    assert json.loads(request.body)["fields"]["project"] == {"key": "OPS"}
+
+
 async def test_catch_up_files_only_posts_newer_than_the_last_digest(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])

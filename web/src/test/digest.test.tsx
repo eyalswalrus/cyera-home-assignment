@@ -81,7 +81,27 @@ describe('NHI Blog Digest settings', () => {
     await user.click(input)
     await user.click(await screen.findByRole('option', { name: 'Security (SEC)' }))
     await user.click(screen.getByRole('button', { name: 'Save projects' }))
-    await waitFor(() => expect(sent).toEqual({ project_keys: ['SEC'] }))
+    await waitFor(() => expect(sent).toEqual({ project_keys: ['SEC'], send_latest_now: false }))
+  })
+
+  it('can send the latest post to newly added projects right away', async () => {
+    let sent: unknown
+    server.use(
+      http.get('*/api/digest', () => HttpResponse.json({ ...ready, subscriptions: [] })),
+      http.get('*/api/digest/projects', () => HttpResponse.json([{ id: '1', key: 'SEC', name: 'Security' }])),
+      http.put('*/api/digest/subscriptions', async ({ request }) => {
+        sent = await request.json()
+        return HttpResponse.json({ ...ready, running: true })
+      }),
+    )
+    const { user } = renderApp('/settings')
+    expect(screen.queryByRole('checkbox', { name: /Also send the latest/ })).not.toBeInTheDocument()
+    const [input] = await screen.findAllByRole('combobox', { name: /Projects that receive the digest/ })
+    await user.click(input)
+    await user.click(await screen.findByRole('option', { name: 'Security (SEC)' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Also send the latest blog post to SEC now' }))
+    await user.click(screen.getByRole('button', { name: 'Save projects' }))
+    await waitFor(() => expect(sent).toEqual({ project_keys: ['SEC'], send_latest_now: true }))
   })
 
   it('explains why subscriptions are locked', async () => {

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import current_active_user
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.rate_limit import RateLimit
 from app.db.models import User
 from app.db.session import get_db
@@ -114,6 +114,10 @@ class SubscriptionsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     project_keys: Annotated[list[ProjectKey], Field(max_length=digest.MAX_SUBSCRIPTIONS)]
+    send_latest_now: bool = Field(
+        default=False,
+        description="For projects added in this request: also file the current latest post, and run now.",
+    )
 
     @field_validator("project_keys", mode="before")
     @classmethod
@@ -130,8 +134,19 @@ async def set_subscriptions(
     db: AsyncSession = Depends(get_db),
     runtime: DigestRuntime = Depends(_runtime),
 ) -> DigestStatus:
-    await digest.set_subscriptions(db, user, get_settings(), runtime, body.project_keys)
+    settings = get_settings()
+    if await digest.set_subscriptions(db, user, settings, runtime, body.project_keys, body.send_latest_now):
+        _start_run(settings, runtime)
     return await get_status(user, db, runtime)
+
+
+def _start_run(settings: Settings, runtime: DigestRuntime) -> bool:
+    """Start a background run unless one is already going (it will pick the change up anyway on
+    its next pass). Returns whether a run was started."""
+    if runtime.running:
+        return False
+    runtime.task = asyncio.create_task(digest.run_digest(settings, runtime))
+    return True
 
 
 @router.post(
@@ -144,8 +159,7 @@ async def run_now(user: User = Depends(current_active_user), runtime: DigestRunt
     settings = get_settings()
     if not settings.digest_configured:
         raise digest.DigestUnavailable("The blog digest hasn't been set up on this server.")
-    if runtime.running:
-        raise digest.DigestAlreadyRunning()
     # Already-filed posts are skipped per project, so running again never duplicates tickets.
-    runtime.task = asyncio.create_task(digest.run_digest(settings, runtime))
+    if not _start_run(settings, runtime):
+        raise digest.DigestAlreadyRunning()
     return {"status": "started"}

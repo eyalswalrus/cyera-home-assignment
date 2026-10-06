@@ -532,6 +532,10 @@ per project, errors, last run, and a *Run now* button for demos).
   - the publish date of the newest post already filed there, or
   - when its current subscriptions began, if that is later. That is the **fresh start**: a new
     subscription receives posts published after subscribing, not the existing backlog.
+  - Optionally, **"Also send the latest blog post now"** (a checkbox when adding projects) moves a
+    new subscription's start back to just before the newest post that already existed, and starts
+    a run immediately: the project gets that one post now, still not the whole backlog. It only
+    applies to projects added in that save, never to existing subscriptions.
 
   Each run files the posts published after the watermark that aren't in the project yet, **oldest
   first**, so a day with two new posts files both. At most 5 per project per run, so a long outage

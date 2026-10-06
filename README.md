@@ -106,7 +106,8 @@ as Jira tickets in the projects users choose under **Settings → NHI Blog Diges
 
 The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`) and once shortly after startup; **Run now**
 in Settings runs it on demand. Each post is summarized once and stored. A new subscription receives
-posts published after subscribing, so expect "up to date" until the blog publishes something new.
+posts published after subscribing; to see a ticket right away, tick **"Also send the latest blog
+post … now"** when adding the project.
 
 ## Architecture
 

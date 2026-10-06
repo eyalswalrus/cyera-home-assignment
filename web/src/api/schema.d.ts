@@ -716,6 +716,12 @@ export interface components {
         SubscriptionsIn: {
             /** Project Keys */
             project_keys: string[];
+            /**
+             * Send Latest Now
+             * @description For projects added in this request: also file the current latest post, and run now.
+             * @default false
+             */
+            send_latest_now?: boolean;
         };
         /** UserCreate */
         UserCreate: {

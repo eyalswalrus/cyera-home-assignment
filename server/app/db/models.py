@@ -141,6 +141,9 @@ class DigestSubscription(Base):
     user_id: Mapped[uuid.UUID] = _user_fk()
     project_key: Mapped[str] = mapped_column(String(32), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "Also send the latest post now": the newest post published before subscribing is due too,
+    # instead of only posts published afterwards (the fresh-start default).
+    include_latest: Mapped[bool] = mapped_column(default=False, nullable=False)
     # Why the last run couldn't deliver for this subscription (cleared on success).
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
