@@ -23,3 +23,6 @@ web/dist/
 
 # Assignment brief (marked Cyera Confidential - keep out of the repo)
 *.pdf
+
+# Machine-specific editor/agent config
+.claude/

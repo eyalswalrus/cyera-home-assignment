@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from cryptography.fernet import Fernet
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,10 +46,15 @@ async def db() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[AsyncClient]:
+async def app() -> AsyncIterator[FastAPI]:
     from app.main import create_app
 
-    app = create_app()
-    async with app.router.lifespan_context(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
+    application = create_app()
+    async with application.router.lifespan_context(application):
+        yield application
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac

@@ -7,8 +7,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from app.api import health
+from app.api import auth, health
 from app.core.config import get_settings
+from app.core.csrf import JSONCSRFMiddleware
+from app.core.rate_limit import build_rate_limiter
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.db.session import close_db, init_db
 
 
@@ -38,8 +41,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="IdentityHub", version="0.1.0", lifespan=lifespan)
+    app.state.rate_limiter = build_rate_limiter()
+
+    # Middleware added last runs first: security headers wrap everything, including CSRF rejections.
+    app.add_middleware(
+        JSONCSRFMiddleware,
+        secret=settings.secret_key.get_secret_value(),
+        cookie_secure=settings.cookie_secure,
+    )
+    app.add_middleware(SecurityHeadersMiddleware, https=settings.cookie_secure)
 
     app.include_router(health.router, prefix="/api")
+    app.include_router(auth.router, prefix="/api")
 
     # Mounted last so /api routes take precedence.
     if settings.static_dir and settings.static_dir.is_dir():

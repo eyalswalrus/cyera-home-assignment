@@ -16,7 +16,8 @@ dependencies = [
     "itsdangerous>=2.2",
     "atlassian-python-api>=5.0",  # JiraCloud client (enhanced JQL search)
     "starlette-csrf>=3.0",
-    "slowapi>=0.1.9",
+    "secure>=2.0.1",
+    "limits>=5.8.0",
 ]
 
 [dependency-groups]
