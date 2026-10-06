@@ -6,6 +6,7 @@ Refuses to overwrite an existing `.env`.
 """
 
 import base64
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -30,8 +31,10 @@ def main() -> int:
     for line in EXAMPLE.read_text().splitlines():
         key = line.split("=", 1)[0]
         lines.append(f"{key}={generated[key]}" if key in generated else line)
-    TARGET.write_text("\n".join(lines) + "\n")
-    TARGET.chmod(0o600)
+    # Create the file owner-only from the start, so the secrets are never world-readable.
+    fd = os.open(TARGET, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
 
     print(f"Created {TARGET} with generated SECRET_KEY and ENCRYPTION_KEYS.")
     print("Next: add your Atlassian OAuth app credentials (ATLASSIAN_CLIENT_ID / ATLASSIAN_CLIENT_SECRET).")

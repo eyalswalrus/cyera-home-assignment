@@ -36,7 +36,7 @@ Requires Python 3.12+ and Node 20+.
 # Backend (http://localhost:8000)
 cd server
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/fastapi dev app/main.py
+.venv/bin/uvicorn app.main:app --reload
 
 # Frontend (http://localhost:5173, proxies /api to the backend)
 cd web
@@ -77,8 +77,11 @@ and session cookies stay first-party.
 ## Security notes
 
 - **Multi-tenancy:** _TBD_
-- **Jira credentials:** OAuth tokens are encrypted at rest with `MultiFernet` (key rotation by
-  prepending a new key to `ENCRYPTION_KEYS`) and are never sent to the browser.
+- **Jira credentials:** OAuth tokens are encrypted at rest with `MultiFernet` and are never sent
+  to the browser. To rotate the key: prepend a new key to `ENCRYPTION_KEYS`, run
+  `python -m app.db.rotate_keys` (re-encrypts every row with the new key), then remove the old key.
+- **Database integrity:** SQLite foreign keys are enabled on every connection, so deleting a user
+  cascades to their Jira connection, API keys and findings.
 - **Sessions:** _TBD_
 - **API keys:** _TBD_
 

@@ -23,8 +23,15 @@ class Base(DeclarativeBase):
     pass
 
 
-def _user_fk() -> Mapped[uuid.UUID]:
-    return mapped_column(GUID, ForeignKey("user.id", ondelete="cascade"), nullable=False, index=True)
+def _user_fk(*, unique: bool = False) -> Mapped[uuid.UUID]:
+    return mapped_column(
+        GUID, ForeignKey("user.id", ondelete="cascade"), nullable=False, index=True, unique=unique
+    )
+
+
+def _str_enum(enum_cls: type[enum.StrEnum]) -> Enum:
+    # Store the enum's value ("active"), not its Python name ("ACTIVE"), so raw rows match the API.
+    return Enum(enum_cls, native_enum=False, values_callable=lambda members: [m.value for m in members])
 
 
 class User(SQLAlchemyBaseUserTableUUID, Base):
@@ -48,16 +55,15 @@ class JiraConnection(Base):
     __tablename__ = "jira_connection"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        GUID, ForeignKey("user.id", ondelete="cascade"), nullable=False, unique=True
-    )
+    # One Jira site per user for this POC.
+    user_id: Mapped[uuid.UUID] = _user_fk(unique=True)
     cloud_id: Mapped[str] = mapped_column(String(64), nullable=False)
     site_url: Mapped[str] = mapped_column(String(255), nullable=False)
     site_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Full OAuth token set (access_token, refresh_token, expires_at, scope), encrypted at rest.
     token: Mapped[dict[str, Any]] = mapped_column(EncryptedJSON, nullable=False)
     status: Mapped[JiraConnectionStatus] = mapped_column(
-        Enum(JiraConnectionStatus, native_enum=False), default=JiraConnectionStatus.ACTIVE, nullable=False
+        _str_enum(JiraConnectionStatus), default=JiraConnectionStatus.ACTIVE, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -94,7 +100,7 @@ class Finding(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = _user_fk()
-    source: Mapped[FindingSource] = mapped_column(Enum(FindingSource, native_enum=False), nullable=False)
+    source: Mapped[FindingSource] = mapped_column(_str_enum(FindingSource), nullable=False)
     api_key_id: Mapped[uuid.UUID | None] = mapped_column(GUID, ForeignKey("api_key.id", ondelete="set null"))
     cloud_id: Mapped[str] = mapped_column(String(64), nullable=False)
     project_key: Mapped[str] = mapped_column(String(32), nullable=False)

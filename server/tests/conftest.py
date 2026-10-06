@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator, Iterator
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,16 @@ def _reset_caches() -> None:
     crypto.get_fernet.cache_clear()
     session._engine = None
     session._sessionmaker = None
+
+
+@pytest.fixture
+async def db() -> AsyncIterator[AsyncSession]:
+    from app.db.session import close_db, get_db, init_db
+
+    await init_db()
+    async for session in get_db():
+        yield session
+    await close_db()
 
 
 @pytest.fixture

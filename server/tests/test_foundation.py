@@ -1,8 +1,31 @@
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import text
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete, func, select, text
 
+from app.core import crypto
 from app.core.config import get_settings
+from app.db.models import JiraConnection, User
+
+TOKEN = {"access_token": "super-secret-access", "refresh_token": "super-secret-refresh"}
+
+
+async def _add_connection(db, email: str = "a@example.com") -> JiraConnection:
+    user = User(email=email, hashed_password="x")
+    db.add(user)
+    await db.flush()
+    connection = JiraConnection(
+        user_id=user.id, cloud_id="c1", site_url="https://x.atlassian.net", site_name="x", token=TOKEN
+    )
+    db.add(connection)
+    await db.commit()
+    return connection
+
+
+def _use_keys(monkeypatch, keys: str) -> None:
+    monkeypatch.setenv("ENCRYPTION_KEYS", keys)
+    get_settings.cache_clear()
+    crypto.get_fernet.cache_clear()
 
 
 async def test_health(client):
@@ -11,43 +34,44 @@ async def test_health(client):
     assert response.json() == {"status": "ok", "jira_configured": True}
 
 
-async def test_tokens_are_encrypted_at_rest(client):
-    from app.db.models import JiraConnection, User
-    from app.db.session import get_db
+async def test_tokens_are_encrypted_at_rest(db):
+    connection = await _add_connection(db)
 
-    token = {"access_token": "super-secret-access", "refresh_token": "super-secret-refresh"}
-    async for db in get_db():
-        user = User(email="a@example.com", hashed_password="x")
-        db.add(user)
-        await db.flush()
-        connection = JiraConnection(
-            user_id=user.id, cloud_id="c1", site_url="https://x.atlassian.net", site_name="x", token=token
-        )
-        db.add(connection)
-        await db.commit()
+    raw = (await db.execute(text("SELECT token FROM jira_connection"))).scalar_one()
+    assert "super-secret" not in raw
 
-        raw = (await db.execute(text("SELECT token FROM jira_connection"))).scalar_one()
-        assert "super-secret" not in raw
-
-        loaded = await db.get(JiraConnection, connection.id, populate_existing=True)
-        assert loaded is not None and loaded.token == token
+    loaded = await db.get(JiraConnection, connection.id, populate_existing=True)
+    assert loaded is not None and loaded.token == TOKEN
 
 
-def test_encryption_key_rotation(monkeypatch):
-    from app.core import crypto
-    from app.core.crypto import EncryptedJSON
+async def test_enums_are_stored_by_value(db):
+    await _add_connection(db)
+    assert (await db.execute(text("SELECT status FROM jira_connection"))).scalar_one() == "active"
+
+
+async def test_deleting_user_cascades_to_their_data(db):
+    await _add_connection(db, "a@example.com")
+    await _add_connection(db, "b@example.com")
+
+    await db.execute(delete(User).where(User.email == "a@example.com"))
+    await db.commit()
+
+    assert await db.scalar(select(func.count()).select_from(JiraConnection)) == 1
+
+
+async def test_key_rotation_allows_removing_old_key(db, monkeypatch):
+    from app.db.rotate_keys import rotate
 
     old_key, new_key = Fernet.generate_key().decode(), Fernet.generate_key().decode()
-    column = EncryptedJSON()
+    _use_keys(monkeypatch, old_key)
+    connection = await _add_connection(db)
 
-    monkeypatch.setenv("ENCRYPTION_KEYS", old_key)
-    get_settings.cache_clear(); crypto.get_fernet.cache_clear()
-    ciphertext = column.process_bind_param({"a": 1}, None)
+    _use_keys(monkeypatch, f"{new_key},{old_key}")
+    assert await rotate() == 1
 
-    # Prepend a new key: data written with the old key must still decrypt.
-    monkeypatch.setenv("ENCRYPTION_KEYS", f"{new_key},{old_key}")
-    get_settings.cache_clear(); crypto.get_fernet.cache_clear()
-    assert column.process_result_value(ciphertext, None) == {"a": 1}
+    _use_keys(monkeypatch, new_key)  # old key retired
+    loaded = await db.get(JiraConnection, connection.id, populate_existing=True)
+    assert loaded is not None and loaded.token == TOKEN
 
 
 def test_invalid_config_fails_with_actionable_message(monkeypatch):
@@ -61,8 +85,6 @@ def test_invalid_config_fails_with_actionable_message(monkeypatch):
 
 
 async def test_spa_fallback_only_for_page_routes(tmp_path, monkeypatch):
-    from httpx import ASGITransport, AsyncClient
-
     from app.main import create_app
 
     (tmp_path / "index.html").write_text("<title>IdentityHub</title>")

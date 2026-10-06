@@ -4,17 +4,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from app.api import health
 from app.core.config import get_settings
-from app.db.session import init_db
+from app.db.session import close_db, init_db
 
 
 class SPAStaticFiles(StaticFiles):
     """Serves the built React app, falling back to index.html so client-side routes
     (e.g. /settings) work on a hard refresh."""
 
-    async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def]
+    async def get_response(self, path: str, scope: Scope) -> Response:
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
@@ -30,6 +32,7 @@ class SPAStaticFiles(StaticFiles):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     yield
+    await close_db()
 
 
 def create_app() -> FastAPI:
