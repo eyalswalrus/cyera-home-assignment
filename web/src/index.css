@@ -1,0 +1,4 @@
+.ticket-row:hover,
+.ticket-row:focus-visible {
+  background: var(--mantine-color-default-hover);
+}

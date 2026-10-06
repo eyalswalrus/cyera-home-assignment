@@ -16,7 +16,7 @@ part lands.
 | **FastAPI + Pydantic** backend | Request/response validation and OpenAPI docs come for free, which suits a product whose second consumer is a REST API for scanners and CI pipelines. |
 | **React + Vite + TypeScript** frontend | Clear separation: the UI is a static app that only talks to `/api`. |
 | **One origin** - FastAPI serves the built UI | No CORS configuration, and session cookies stay first-party. In development, Vite proxies `/api` to FastAPI so the browser still sees one origin. |
-| **SQLite** | Zero setup for reviewers. All access goes through SQLAlchemy, so moving to Postgres is a connection-string change (plus migrations, see section 9). |
+| **SQLite** | Zero setup for reviewers. All access goes through SQLAlchemy, so moving to Postgres is a connection-string change (plus migrations, see section 10). |
 | **Docker Compose** as the primary run path | `docker compose up` is the lowest-friction way to run both halves. |
 | **Locked dependencies** (`uv.lock`, `package-lock.json`) | The Docker build installs exactly the tested versions (`uv sync --locked`, `npm ci`), so the image is reproducible. |
 
@@ -296,7 +296,61 @@ Input problems (missing title, unknown fields, invalid project key) are rejected
 
 ---
 
-## 6. Browser security
+## 6. User interface
+
+**Stack:** React + TypeScript, Mantine components, TanStack Query for server state,
+react-hook-form + zod for forms, React Router.
+
+### Pages
+
+| Page | What it does |
+|---|---|
+| Sign in / Create account | Registration signs the user straight in. Password rules are shown up front, and server-side rejections appear on the password field. |
+| Report finding | Searchable project picker, the finding form, and the 10 recent tickets for the chosen project side by side (stacked on phones). |
+| Settings | Jira connection: connected site and account, reconnect or switch account, disconnect (with confirmation), choose a site, and the outcome of the OAuth redirect. |
+
+### Interaction decisions
+
+- **The UI follows the Jira connection state.** Each state gets one clear next step instead of a
+  form that would fail: not configured on the server, *Connect Jira*, *Choose a site*,
+  *Reconnect Jira*, or the form. If Jira rejects the token mid-request, the banner switches to
+  *Reconnect Jira* without a reload.
+- **Project picker:** searches Jira as you type (debounced), lists only projects you can create
+  issues in, and remembers your last project per user in this browser.
+- **The form** is disabled until a project is chosen, validates instantly with the same limits as
+  the server (the server stays the authority), and disables the submit button while sending so a
+  double click can't create two tickets. On success it shows the new key with an *Open in Jira*
+  link, clears the fields, keeps the project, and refreshes the recent list. On failure it keeps
+  everything the user typed and shows the server's message, e.g. "Your Jira account doesn't have
+  permission to create issues in SEC."
+- **Recent tickets** open in a new tab (`rel="noopener noreferrer"`), show relative time with the
+  exact time on hover, and give the title its own line, since that's what people scan for.
+- **One error shape:** every failure becomes an `ApiError` with a readable message. That covers
+  server `detail`/`code`, fastapi-users codes such as `LOGIN_BAD_CREDENTIALS`, 422 field errors
+  mapped onto inputs, and network failures. 4xx responses aren't retried; network errors and 5xx
+  are retried twice.
+- **Light and dark mode** follow the operating system. Layouts work at phone width without
+  horizontal scrolling.
+
+### Wiring
+
+- **Typed API client:** TypeScript types are generated from FastAPI's OpenAPI schema
+  (`npm run gen:api`, openapi-typescript) and used through `openapi-fetch`, so a backend contract
+  change shows up as a frontend type error. openapi-typescript is run via `npx` with its own
+  TypeScript 5, because it doesn't support the project's TypeScript 6 yet; it is a code generator
+  and never ships in the app.
+- **CSRF:** a client middleware reads the `csrftoken` cookie and sends it as `X-CSRFToken` on every
+  write.
+- **Session:** `/api/auth/me` decides whether to show the app or the login page. After login,
+  users land on the page they originally asked for, and only same-app paths are followed.
+  Logging out clears all cached data, so the next user in the same browser starts clean.
+- **Tests:** Vitest + Testing Library render the real routes against a mocked API (msw): auth
+  errors, each connection state, the OAuth error banner, creating a ticket (payload and CSRF
+  header), client-side validation, server errors, and the recent list's links.
+
+---
+
+## 7. Browser security
 
 - **CSRF:** double-submit cookie (starlette-csrf). Every state-changing browser request must
   echo the `csrftoken` cookie in an `X-CSRFToken` header. A cross-site attacker can make the
@@ -311,7 +365,7 @@ Input problems (missing title, unknown fields, invalid project key) are rejected
 
 ---
 
-## 7. Public REST API **(planned)**
+## 8. Public REST API **(planned)**
 
 - API keys are shown once at creation and stored only as SHA-256 hashes, with a short visible
   prefix so users can tell keys apart. A key acts as its owner and uses the owner's Jira
@@ -319,7 +373,7 @@ Input problems (missing title, unknown fields, invalid project key) are rejected
 
 ---
 
-## 8. Secrets and configuration
+## 9. Secrets and configuration
 
 - **Fail fast:** the app refuses to start if a required secret is missing or malformed, and the
   message names the setting and how to generate it (`scripts/init_env.py`).
@@ -332,7 +386,7 @@ Input problems (missing title, unknown fields, invalid project key) are rejected
 
 ---
 
-## 9. Known limitations and production next steps
+## 10. Known limitations and production next steps
 
 - **SSO and provisioning** with SAML/OIDC and SCIM instead of local passwords (section 3).
 - **Organizations** with membership and Row-Level Security (section 2).

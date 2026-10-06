@@ -62,6 +62,10 @@ npm install && npm run dev
 
 # Tests
 cd server && uv run pytest
+cd web && npm test
+
+# After changing the API: regenerate the frontend's TypeScript types from FastAPI's schema
+cd web && npm run gen:api
 ```
 
 Dependencies are locked on both sides (`server/uv.lock`, `web/package-lock.json`), and the
@@ -71,12 +75,16 @@ Docker build installs from those lock files only (`uv sync --locked`, `npm ci`).
 
 ```
 web/      React + Vite + TypeScript SPA - UI only, talks to /api
+  src/api/        typed API client (generated from OpenAPI), React Query hooks, error mapping
+  src/pages/      Sign in, Create account, Report finding, Settings
+  src/components/ project picker, finding form, recent tickets, Jira status
 server/   FastAPI backend
   app/api/       HTTP layer: request validation → service call → response
   app/services/  business logic (findings, Jira connection, API keys)
   app/jira/      Jira Cloud client wrapper + error translation
   app/db/        SQLAlchemy models and session
-  app/core/      settings, encryption
+  app/schemas/   request/response contracts shared by the UI and REST API
+  app/core/      settings, encryption, CSRF, rate limiting, security headers
 scripts/  helper scripts (env bootstrap)
 ```
 
