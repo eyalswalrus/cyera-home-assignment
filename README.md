@@ -30,21 +30,25 @@ Open http://localhost:8000.
 
 ### Local development (without Docker)
 
-Requires Python 3.12+ and Node 20+.
+Requires [uv](https://docs.astral.sh/uv/) and Node 20+. uv installs the pinned Python version
+and the exact dependency versions from `server/uv.lock`.
 
 ```bash
 # Backend (http://localhost:8000)
 cd server
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/uvicorn app.main:app --reload
+uv sync
+uv run uvicorn app.main:app --reload
 
 # Frontend (http://localhost:5173, proxies /api to the backend)
 cd web
 npm install && npm run dev
 
 # Tests
-cd server && .venv/bin/pytest
+cd server && uv run pytest
 ```
+
+Dependencies are locked on both sides (`server/uv.lock`, `web/package-lock.json`), and the
+Docker build installs from those lock files only (`uv sync --locked`, `npm ci`).
 
 ## Architecture
 
@@ -79,7 +83,7 @@ and session cookies stay first-party.
 - **Multi-tenancy:** _TBD_
 - **Jira credentials:** OAuth tokens are encrypted at rest with `MultiFernet` and are never sent
   to the browser. To rotate the key: prepend a new key to `ENCRYPTION_KEYS`, run
-  `python -m app.db.rotate_keys` (re-encrypts every row with the new key), then remove the old key.
+  `uv run python -m app.db.rotate_keys` (re-encrypts every row with the new key), then remove the old key.
 - **Database integrity:** SQLite foreign keys are enabled on every connection, so deleting a user
   cascades to their Jira connection, API keys and findings.
 - **Sessions:** _TBD_

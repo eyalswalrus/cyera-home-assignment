@@ -6,13 +6,19 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# --- Stage 2: install the backend and its dependencies into a virtualenv ------------------
+# --- Stage 2: install the backend into a virtualenv, exactly as pinned in uv.lock ---------
 FROM python:3.14-slim AS server
-ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-RUN python -m venv /opt/venv
-COPY server/pyproject.toml /src/
-COPY server/app /src/app
-RUN /opt/venv/bin/pip install /src
+COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /bin/uv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+WORKDIR /src
+# Dependencies first, in their own layer, so code changes don't reinstall them.
+COPY server/pyproject.toml server/uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+COPY server/app ./app
+RUN uv sync --locked --no-dev --no-editable
 
 # --- Stage 3: runtime - just the virtualenv and the built UI, served from one origin ------
 FROM python:3.14-slim
