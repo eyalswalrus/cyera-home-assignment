@@ -116,6 +116,39 @@ click, and the resulting token is still limited to that user's Jira permissions.
 to avoid a per-user OAuth step is to ship IdentityHub as an Atlassian app (Forge) installed on the
 customer's site, which is a different distribution model.
 
+### How SSO and per-user Jira permissions work together
+
+The two are separate layers that combine:
+
+| Layer | Answers | Mechanism | Token issued by |
+|---|---|---|---|
+| Sign-in to IdentityHub | *Who is this person?* | SSO (OIDC / SAML) | The customer's IdP |
+| Access to Jira | *What may they do in Jira?* | Per-user OAuth 3LO | Atlassian |
+
+1. The user signs in to IdentityHub through their IdP.
+2. The first time, they click "Connect Jira". The customer's Atlassian organization usually signs
+   in through the same IdP, so the redirect goes IdentityHub → Atlassian → IdP (already signed in)
+   → back. The user sees only a one-time consent screen, with no password prompt.
+3. IdentityHub stores the token encrypted and refreshes it in the background (`offline_access`).
+4. Every Jira call uses that user's token, so Jira checks their permissions at call time.
+   IdentityHub never caches permissions, so changes made in Jira apply on the next request.
+
+To make this robust in production:
+
+- **Check that the Jira account belongs to the person.** After the OAuth callback, call Jira's
+  `/myself` and check that the Atlassian account matches the SSO identity (same email, or the
+  company's verified domain). Otherwise a user could connect a personal or someone else's
+  Atlassian account. Email visibility depends on the Atlassian profile's privacy settings;
+  company-managed accounts usually expose it, but this needs verifying per customer.
+- **Offboarding comes from both sides.** When the IdP deactivates a user, SCIM tells IdentityHub to
+  delete their sessions, Jira token and API keys. The IdP also deprovisions their Atlassian
+  account, so any stored token stops refreshing even if our cleanup missed something.
+- **Automation uses a service identity, not a person.** A scanner calling the REST API with a
+  person's API key acts as that person and breaks when they leave. In production, automated
+  sources would use an organization-level service account: a dedicated Atlassian user whose
+  permissions cover only the projects scanners may create tickets in. This is the one case where
+  an org-level Jira identity is appropriate.
+
 ---
 
 ## 4. Jira connection: OAuth 2.0 (3LO) per user **(planned)**
