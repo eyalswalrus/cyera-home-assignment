@@ -4,9 +4,6 @@ This document records the decisions behind IdentityHub's Jira integration, the a
 were considered, and what a production-ready version would do differently. Setup instructions
 live in the [README](README.md).
 
-Sections marked **(planned)** describe parts that are not built yet; they are updated as each
-part lands.
-
 ---
 
 ## 1. Stack and runtime
@@ -54,8 +51,10 @@ the library slowapi is built on; used as a dependency, it attaches to any router
 ## 2. Tenancy: the tenant is the user
 
 Each user is their own tenant. Every tenant-owned table (`jira_connection`, `api_key`,
-`finding`) has a non-null `user_id`, and queries always filter on the **authenticated** user's
-id, never on an id taken from the request.
+`finding`, `digest_subscription`) has a non-null `user_id`, and queries always filter on the
+**authenticated** user's id, never on an id taken from the request. The blog digest's posts and
+deliveries are deliberately *not* per user: a digest ticket belongs to a Jira project, shared by
+everyone subscribed to it (section 9).
 
 **Why per user rather than per organization:** each user connects Jira with their *own*
 Atlassian account. Jira then enforces their real permissions: they only see projects they may
@@ -156,7 +155,8 @@ To make this robust in production:
   person's API key acts as that person and breaks when they leave. In production, automated
   sources would use an organization-level service account: a dedicated Atlassian user whose
   permissions cover only the projects scanners may create tickets in. This is the one case where
-  an org-level Jira identity is appropriate.
+  an org-level Jira identity is appropriate, and the blog digest's bot account (section 9) is
+  exactly this pattern.
 
 ---
 
@@ -314,7 +314,7 @@ react-hook-form + zod for forms, React Router.
 |---|---|
 | Sign in / Create account | Registration signs the user straight in. Password rules are shown up front, and server-side rejections appear on the password field. |
 | Report finding | Searchable project picker, the finding form, and the 10 recent tickets for the chosen project side by side (stacked on phones). |
-| Settings | Jira connection: connected site and account, reconnect or switch account, disconnect (with confirmation), choose a site, and the outcome of the OAuth redirect. |
+| Settings | **Jira connection:** connected site and account, reconnect or switch account, disconnect (with confirmation), choose a site, and the outcome of the OAuth redirect. **NHI Blog Digest:** recipient projects, last ticket or error per project, last run, *Run now*. **API keys:** create (permissions locked once created), one-time reveal, notes, revoke. |
 
 ### Interaction decisions
 
@@ -353,7 +353,8 @@ react-hook-form + zod for forms, React Router.
   Logging out clears all cached data, so the next user in the same browser starts clean.
 - **Tests:** Vitest + Testing Library render the real routes against a mocked API (msw): auth
   errors, each connection state, the OAuth error banner, creating a ticket (payload and CSRF
-  header), client-side validation, server errors, and the recent list's links.
+  header), client-side validation, server errors, the recent list's links, API-key creation,
+  reveal, notes and revocation, and the digest settings.
 
 ---
 
@@ -364,8 +365,9 @@ react-hook-form + zod for forms, React Router.
   browser *send* our cookies but cannot *read* them to build the header. Login and register are
   covered too, which prevents login-CSRF. `/api/v1/*` is exempt because it authenticates with an
   API key header, not cookies.
-- **Rate limiting:** 10 requests per minute per client IP across login, logout and register,
-  answered with `429` and `Retry-After`.
+- **Rate limiting:** 10 requests per minute per client IP across login, logout and register;
+  60 per minute per API key and 120 per IP on `/api/v1`; 3 per minute on the digest's *Run now*.
+  All answered with `429` and `Retry-After`.
 - **Security headers:** strict Content-Security-Policy (`script-src 'self'`, no framing),
   `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and `Permissions-Policy`; HSTS only when
   served over https. The `/docs` page gets a relaxed policy so Swagger UI can load from its CDN.
@@ -561,8 +563,9 @@ default `auto`), with the first available option winning:
    server-side refusal fallback; a refusal, empty or truncated answer is an error, not a ticket.
 2. **A local model via Ollama**, free and offline: `docker compose --profile llm up` starts it and
    downloads `llama3.2:3b` (about 2 GB) on first start. Used when reachable and the model is
-   present. Measured on this Mac's CPU in Docker: about a minute per summary, which is fine for a
-   daily background job, with summaries that follow the requested format and stay on the facts.
+   present. Measured on an Apple-silicon laptop's CPU in Docker: about a minute per summary, fine
+   for a daily background job, with summaries that follow the requested format and stay on the
+   facts.
 3. **Extractive**, built in: the most representative sentences of the article (word-frequency
    scoring). Not an LLM, so it is only the fallback, and tickets say so. Written in ~30 lines
    rather than pulling in `sumy`, which needs NLTK's tokenizer data downloaded at build or first
@@ -581,12 +584,12 @@ ticket text, so a prompt injection in a post could at worst produce a misleading
 
 - **Fail fast:** the app refuses to start if a required secret is missing or malformed, and the
   message names the setting and how to generate it (`scripts/init_env.py`).
-- **The Jira integration is optional at startup:** without Atlassian credentials the app still
-  runs, and the UI explains that the integration isn't configured.
+- **The Jira integration and the digest are optional at startup:** without their credentials the
+  app still runs, and the UI explains what isn't configured.
 - **Encryption key rotation:** prepend a new key to `ENCRYPTION_KEYS`, run
   `uv run python -m app.db.rotate_keys` to re-encrypt every row with it, then remove the old key.
 - **Referential integrity:** SQLite foreign keys are enabled on every connection, so deleting a
-  user cascades to their Jira connection, API keys and findings.
+  user cascades to their Jira connection, API keys, findings and digest subscriptions.
 
 ---
 
@@ -610,8 +613,9 @@ ticket text, so a prompt injection in a post could at worst produce a misleading
 - **The digest scheduler runs in-process,** with its last-run status in memory (summaries and
   deliveries are in the database). With several replicas, run it in one (a leader lock, or a
   separate cron job calling the same function).
-- **Stored summaries are kept** even if a better summarizer is configured later; deleting a
-  `digest_post` row would regenerate it for posts not yet filed everywhere.
+- **Stored summaries are never regenerated,** even if a better summarizer is configured later.
+  A re-summarize command would update `digest_post.summary` in place. (Deleting the row is not the
+  way: it cascades to the post's deliveries, so the post would be filed again.)
 - **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
 - **Swagger UI's "Try it out"** can't call cookie-authenticated endpoints, because it doesn't send
   the CSRF header. It is intended for the API-key REST API.
