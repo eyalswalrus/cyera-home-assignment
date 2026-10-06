@@ -1,14 +1,17 @@
 """Encryption at rest for secrets stored in the database (e.g. Jira OAuth tokens)."""
 
 import json
+import logging
 from functools import lru_cache
 from typing import Any
 
-from cryptography.fernet import MultiFernet
+from cryptography.fernet import InvalidToken, MultiFernet
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 
 from app.core.config import build_fernet, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -34,4 +37,10 @@ class EncryptedJSON(TypeDecorator[dict[str, Any]]):
     def process_result_value(self, value: str | None, dialect: Any) -> dict[str, Any] | None:
         if value is None:
             return None
-        return json.loads(get_fernet().decrypt(value.encode()))
+        try:
+            return json.loads(get_fernet().decrypt(value.encode()))
+        except InvalidToken:
+            # Encrypted with a key that's no longer configured. Surface as "no value" so callers
+            # can ask the user to reconnect, instead of failing every query that loads the row.
+            logger.warning("Could not decrypt a stored secret; was ENCRYPTION_KEYS changed?")
+            return None

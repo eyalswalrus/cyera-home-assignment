@@ -15,23 +15,33 @@ from app.db.models import JiraConnection
 from app.db.session import close_db, get_db
 
 
-async def rotate() -> int:
-    count = 0
+async def rotate() -> tuple[int, int]:
+    """Returns (rotated, skipped). Rows that no configured key can decrypt are skipped and left
+    untouched - rewriting them would replace the ciphertext with NULL and lose it for good."""
+    rotated = skipped = 0
     async for db in get_db():
         for connection in (await db.scalars(select(JiraConnection))).all():
+            if connection.token is None:
+                skipped += 1
+                continue
             # Decrypted on load (any key); marking it dirty re-encrypts it with the primary key.
             flag_modified(connection, "token")
-            count += 1
+            rotated += 1
         await db.commit()
-    return count
+    return rotated, skipped
 
 
 async def main() -> None:
     try:
-        count = await rotate()
+        rotated, skipped = await rotate()
     finally:
         await close_db()
-    print(f"Re-encrypted {count} Jira connection(s) with the primary key.")
+    print(f"Re-encrypted {rotated} Jira connection(s) with the primary key.")
+    if skipped:
+        print(
+            f"WARNING: {skipped} connection(s) could not be decrypted with any configured key and were "
+            "left unchanged. Keep the old key in ENCRYPTION_KEYS, or those users must reconnect Jira."
+        )
 
 
 if __name__ == "__main__":

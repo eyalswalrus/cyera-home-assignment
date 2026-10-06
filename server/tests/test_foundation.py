@@ -67,7 +67,7 @@ async def test_key_rotation_allows_removing_old_key(db, monkeypatch):
     connection = await _add_connection(db)
 
     _use_keys(monkeypatch, f"{new_key},{old_key}")
-    assert await rotate() == 1
+    assert await rotate() == (1, 0)
 
     _use_keys(monkeypatch, new_key)  # old key retired
     loaded = await db.get(JiraConnection, connection.id, populate_existing=True)
@@ -95,3 +95,19 @@ async def test_spa_fallback_only_for_page_routes(tmp_path, monkeypatch):
         assert "IdentityHub" in (await ac.get("/settings")).text
         assert (await ac.get("/api/does-not-exist")).status_code == 404
         assert (await ac.get("/assets/missing.js")).status_code == 404
+
+
+async def test_undecryptable_token_loads_as_none_and_survives_rotation(db, monkeypatch):
+    from app.db.rotate_keys import rotate
+
+    _use_keys(monkeypatch, Fernet.generate_key().decode())
+    connection = await _add_connection(db)
+    ciphertext = (await db.execute(text("SELECT token FROM jira_connection"))).scalar_one()
+
+    _use_keys(monkeypatch, Fernet.generate_key().decode())  # original key lost
+    loaded = await db.get(JiraConnection, connection.id, populate_existing=True)
+    assert loaded is not None and loaded.token is None
+
+    assert await rotate() == (0, 1)
+    # The ciphertext is untouched, so restoring the old key would still recover it.
+    assert (await db.execute(text("SELECT token FROM jira_connection"))).scalar_one() == ciphertext

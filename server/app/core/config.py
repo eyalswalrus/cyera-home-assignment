@@ -17,6 +17,9 @@ class Settings(BaseSettings):
 
     # Public URL the browser uses to reach the app. Drives OAuth redirect URIs and cookie flags.
     app_base_url: str = "http://localhost:8000"
+    # Where the browser UI lives, if different (Vite dev server: http://localhost:5173).
+    # After the Jira OAuth callback the user is sent back here.
+    ui_base_url: str | None = None
     database_url: str = "sqlite+aiosqlite:///./data/identityhub.db"
     # Directory containing the built React app. Unset in dev, where Vite serves the UI.
     static_dir: Path | None = None
@@ -46,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def cookie_secure(self) -> bool:
         return self.app_base_url.startswith("https://")
+
+    @property
+    def ui_url(self) -> str:
+        return (self.ui_base_url or self.app_base_url).rstrip("/")
 
     @property
     def jira_configured(self) -> bool:

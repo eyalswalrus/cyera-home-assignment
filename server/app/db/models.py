@@ -45,7 +45,9 @@ class AccessToken(SQLAlchemyBaseAccessTokenTableUUID, Base):
 
 class JiraConnectionStatus(enum.StrEnum):
     ACTIVE = "active"
-    # Refresh token was revoked/expired; the user must go through the OAuth flow again.
+    # The Atlassian account can reach several Jira sites; the user must pick one.
+    NEEDS_SITE = "needs_site"
+    # Refresh token was revoked/expired (or can't be decrypted); the user must reconnect.
     NEEDS_REAUTH = "needs_reauth"
 
 
@@ -57,11 +59,16 @@ class JiraConnection(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
     # One Jira site per user for this POC.
     user_id: Mapped[uuid.UUID] = _user_fk(unique=True)
-    cloud_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    site_url: Mapped[str] = mapped_column(String(255), nullable=False)
-    site_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Site fields are empty while status is NEEDS_SITE.
+    cloud_id: Mapped[str | None] = mapped_column(String(64))
+    site_url: Mapped[str | None] = mapped_column(String(255))
+    site_name: Mapped[str | None] = mapped_column(String(255))
+    # The Atlassian identity that granted access, shown in the UI as "Connected as ...".
+    account_id: Mapped[str | None] = mapped_column(String(128))
+    account_name: Mapped[str | None] = mapped_column(String(255))
     # Full OAuth token set (access_token, refresh_token, expires_at, scope), encrypted at rest.
-    token: Mapped[dict[str, Any]] = mapped_column(EncryptedJSON, nullable=False)
+    # Loads as None if it can't be decrypted (e.g. ENCRYPTION_KEYS changed); see EncryptedJSON.
+    token: Mapped[dict[str, Any] | None] = mapped_column(EncryptedJSON)
     status: Mapped[JiraConnectionStatus] = mapped_column(
         _str_enum(JiraConnectionStatus), default=JiraConnectionStatus.ACTIVE, nullable=False
     )

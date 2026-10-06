@@ -3,26 +3,7 @@ from datetime import UTC, datetime, timedelta
 from httpx import AsyncClient
 from sqlalchemy import update
 
-PASSWORD = "correct-horse-battery"
-
-
-async def _csrf(client: AsyncClient) -> dict[str, str]:
-    """Any GET hands out the CSRF cookie; state-changing requests must echo it in a header."""
-    if "csrftoken" not in client.cookies:
-        await client.get("/api/health")
-    return {"X-CSRFToken": client.cookies["csrftoken"]}
-
-
-async def register(client: AsyncClient, email: str, password: str = PASSWORD):
-    return await client.post(
-        "/api/auth/register", json={"email": email, "password": password}, headers=await _csrf(client)
-    )
-
-
-async def login(client: AsyncClient, email: str, password: str = PASSWORD):
-    return await client.post(
-        "/api/auth/login", data={"username": email, "password": password}, headers=await _csrf(client)
-    )
+from helpers import PASSWORD, csrf, login, register
 
 
 async def test_register_login_me_logout(client):
@@ -36,7 +17,7 @@ async def test_register_login_me_logout(client):
     me = await client.get("/api/auth/me")
     assert me.status_code == 200 and me.json()["email"] == "alice@example.com"
 
-    assert (await client.post("/api/auth/logout", headers=await _csrf(client))).status_code == 204
+    assert (await client.post("/api/auth/logout", headers=await csrf(client))).status_code == 204
     assert (await client.get("/api/auth/me")).status_code == 401
 
 
@@ -45,7 +26,7 @@ async def test_logout_revokes_session_server_side(client):
     await login(client, "alice@example.com")
     stolen = client.cookies["identityhub_session"]
 
-    await client.post("/api/auth/logout", headers=await _csrf(client))
+    await client.post("/api/auth/logout", headers=await csrf(client))
 
     # Replaying the old cookie must fail: the session row is gone, not just the browser cookie.
     client.cookies.set("identityhub_session", stolen)
@@ -112,7 +93,7 @@ async def test_register_cannot_escalate_privileges(client, db):
     await client.post(
         "/api/auth/register",
         json={"email": "eve@example.com", "password": PASSWORD, "is_superuser": True, "is_verified": True},
-        headers=await _csrf(client),
+        headers=await csrf(client),
     )
     user = await db.scalar(select(User).where(User.email == "eve@example.com"))
     assert user is not None and not user.is_superuser and not user.is_verified

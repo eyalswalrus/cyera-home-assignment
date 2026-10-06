@@ -151,21 +151,74 @@ To make this robust in production:
 
 ---
 
-## 4. Jira connection: OAuth 2.0 (3LO) per user **(planned)**
+## 4. Jira connection: OAuth 2.0 (3LO) per user
 
-- **OAuth 3LO rather than API tokens:** the user never pastes a long-lived credential into our
-  app, can revoke access from their Atlassian account, and we request only the scopes we need
-  (`read:jira-work`, `write:jira-work`, `read:jira-user`, `offline_access`). The cost is
-  reviewer setup: registering an Atlassian OAuth app takes about five minutes (see README).
-- **Tokens are encrypted at rest** with `MultiFernet` at the ORM layer, so application code sees
-  plaintext and the database file only holds ciphertext. They are never sent to the browser.
-- **Refresh-token rotation:** Atlassian issues a new refresh token on every refresh, and the old
-  one stops working. Each refresh therefore saves the new token, and refreshes are serialized
-  per connection so two concurrent requests can't both use, and invalidate, the same refresh
-  token.
-- **Revoked access or an undecryptable token** marks the connection as needing reconnection, and
-  the user sees "Reconnect Jira" instead of a server error.
-- **One Jira site per user** in this POC.
+**Why OAuth rather than API tokens:** the user never pastes a long-lived credential into our app,
+can revoke access from their Atlassian account, and we request only the scopes we need:
+`read:jira-work`, `write:jira-work`, `read:jira-user`, and `offline_access` for a refresh token.
+The cost is reviewer setup: registering an Atlassian OAuth app takes about five minutes (README).
+
+### The flow
+
+1. **`GET /api/jira/connect`** (a browser navigation): Authlib builds the Atlassian authorize URL
+   with a random `state`, stored in a short-lived signed cookie (`identityhub_oauth`, 10 minutes,
+   `SameSite=Lax` so it survives the redirect back). We also record *which IdentityHub user*
+   started the flow.
+2. **The user consents at Atlassian**, which redirects to **`GET /api/jira/callback`**. There:
+   - `state` must match the stored value, which defeats forged or replayed callbacks;
+   - the logged-in user must be the one who started the flow, so one person's Jira grant can never
+     be attached to another account (for example if the browser's user changed mid-flow);
+   - Authlib exchanges the code for tokens.
+3. **Site discovery:** `accessible-resources` lists the sites the grant covers, keeping only those
+   with Jira write access (the same endpoint lists Confluence sites). One site connects
+   immediately. Several sites put the connection in a `needs_site` state, and the user picks one
+   (`GET /api/jira/sites`, `PUT /api/jira/connection/site`); a site outside the grant is rejected.
+   No sites gives a clear "your account has no Jira site" message.
+4. **Identity:** we call Jira's `/myself` and store the account id and display name, so the UI can
+   show "Connected to *acme* as *Alice*".
+5. **The callback always redirects back to the UI** with either `?jira=connected|choose_site` or
+   `?jira_error=<code>`. Only fixed codes travel in the URL, never free text or a caller-supplied
+   destination, so the redirect can't be used for phishing or open redirects.
+
+### Tokens
+
+- **Encrypted at rest** with `MultiFernet` at the ORM layer, so application code sees plaintext and
+  the database file only holds ciphertext. They are never sent to the browser:
+  `GET /api/jira/connection` returns only status, site and account name.
+- **Refresh 60 seconds before expiry.** Atlassian *rotates* refresh tokens: every refresh returns a
+  new one and invalidates the old. The new token is saved immediately, and refreshes are
+  serialized per connection with a lock. Without it, two concurrent requests could both present
+  the same refresh token; the second would fail and log the user out of Jira. A test runs three
+  concurrent requests against an expired token and asserts exactly one refresh.
+- **Failure modes are kept distinct,** because they need different responses:
+
+  | What happened | Connection becomes | User sees |
+  |---|---|---|
+  | Refresh token revoked or expired (`invalid_grant`) | `needs_reauth` | "Reconnect Jira" |
+  | Token can't be decrypted (encryption key lost) | `needs_reauth` | "Reconnect Jira" |
+  | Atlassian unreachable | unchanged | "Jira couldn't be reached, try again" (502) |
+
+  A temporary outage must not force a user to reconnect.
+- **Disconnect** deletes our copy of the tokens. Atlassian has no token-revocation endpoint for
+  3LO apps; users can also remove the app under *Connected apps* in their Atlassian account.
+
+### Errors
+
+Jira-related failures are raised as typed exceptions (`app/jira/errors.py`), each with an HTTP
+status, a stable `code` and a user-facing message. One exception handler turns them into
+`{"detail": "...", "code": "..."}`, so the UI and API clients get the same shape everywhere.
+
+### Scope of this POC
+
+- **One Jira site per user.**
+- **The refresh lock is per process.** Several workers or replicas would need a distributed lock
+  (e.g. a Postgres advisory lock or Redis).
+- **To verify against real Atlassian:** the token request sends client credentials in a form body
+  (`client_secret_post`). Atlassian documents a JSON body; the tests mock this exchange, so it is
+  confirmed only once real credentials are configured.
+- **HTTP client:** Authlib 1.8 prefers the new `httpx2` package and falls back to `httpx`, which it
+  still supports and which our mocking library (respx) targets. Moving to `httpx2` later is a
+  dependency change.
 
 ---
 
@@ -229,5 +282,6 @@ To make this robust in production:
 - **Rate limits are per IP and in memory** (single process). Production: a shared store (Redis)
   and an additional per-account limit against distributed credential stuffing.
 - **Expired sessions are rejected but not purged;** production would run a periodic cleanup.
+- **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
 - **Swagger UI's "Try it out"** can't call cookie-authenticated endpoints, because it doesn't send
   the CSRF header. It is intended for the API-key REST API.

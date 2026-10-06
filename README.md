@@ -11,7 +11,21 @@ workspace - from the UI or programmatically via a REST API.
 
 ### 1. Create the Atlassian OAuth app (~5 minutes)
 
-_TBD - step-by-step with screenshots/links. Callback URL: `http://localhost:8000/api/jira/callback`._
+You need a Jira Cloud site (a free one from [atlassian.com](https://www.atlassian.com/software/jira/free)
+works) and an OAuth 2.0 app that IdentityHub signs in through:
+
+1. Open the [Atlassian developer console](https://developer.atlassian.com/console/myapps/) →
+   **Create** → **OAuth 2.0 integration**, and give it a name (e.g. "IdentityHub local").
+2. **Permissions** → **Jira API** → **Add**, then **Configure** and add the classic scopes
+   `read:jira-work`, `write:jira-work` and `read:jira-user`.
+   (`offline_access`, for refresh tokens, is requested at sign-in and needs no setup.)
+3. **Authorization** → **OAuth 2.0 (3LO)** → set the callback URL to
+   `http://localhost:8000/api/jira/callback`.
+4. **Settings** → copy the **Client ID** and **Secret** for step 2 below.
+
+By default an Atlassian OAuth app can only be authorized by its owner. To connect a second
+Atlassian account (for example to check that two users see different projects), set
+**Distribution** → **Sharing** in the console.
 
 ### 2. Configure
 
@@ -43,6 +57,8 @@ uv run uvicorn app.main:app --reload
 # Frontend (http://localhost:5173, proxies /api to the backend)
 cd web
 npm install && npm run dev
+# When using the Vite dev server, set UI_BASE_URL=http://localhost:5173 in .env so the
+# Jira OAuth callback returns you to it.
 
 # Tests
 cd server && uv run pytest
