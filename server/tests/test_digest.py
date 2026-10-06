@@ -8,13 +8,14 @@ real Anthropic and Ollama clients are exercised); Jira (users' OAuth and the bot
 import base64
 import json
 import re
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
-from app.db.models import DigestDelivery, DigestSubscription
+from app.db.models import DigestDelivery, DigestPost, DigestSubscription
 from helpers import JIRA_API, connect, csrf, sign_up_and_login
 
 BOT_SITE = "https://acme.atlassian.net"  # same site as the users' OAuth connection (SITE_A)
@@ -68,9 +69,25 @@ def jira(atlassian):
     j.post(f"{BOT_API}/issue", json={"id": "1", "key": "SEC-42"}, status=201)
     oauth = atlassian.oauth
     oauth.get(BLOG).respond(200, text=BLOG_INDEX)
-    oauth.get(f"{BLOG}/featured-older").respond(200, text=post_html("Older featured post", "2026-07-28T10:00:00Z", "Old."))
-    oauth.get(f"{BLOG}/newest").respond(200, text=post_html("When a Worm Steals Your Keys", "2026-09-02T10:00:00Z", "Credentials are the blast radius."))
+    oauth.get(f"{BLOG}/featured-older").respond(200, text=post_html("Older featured post", days_ago(20), "Old."))
+    oauth.get(f"{BLOG}/newest").respond(200, text=post_html("When a Worm Steals Your Keys", days_ago(2), "Credentials are the blast radius."))
     return atlassian
+
+
+def days_ago(days: float) -> str:
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+
+def publish_new_post(jira, title="Brand new post", age_days=0.5):
+    """Adds a newer post to the mocked blog index."""
+    jira.oauth.get(BLOG).respond(200, text=BLOG_INDEX + '<a href="/blog/brand-new">B</a>')
+    jira.oauth.get(f"{BLOG}/brand-new").respond(200, text=post_html(title, days_ago(age_days), "Fresh news."))
+
+
+async def backdate_subscriptions(db, days: float) -> None:
+    """Pretend the subscriptions were made `days` ago (fresh start counts from subscribing)."""
+    await db.execute(update(DigestSubscription).values(created_at=datetime.now(UTC) - timedelta(days=days)))
+    await db.commit()
 
 
 async def connected_user(client, email="alice@example.com"):
@@ -174,21 +191,27 @@ async def run(app):
     return await run_digest(get_settings(), app.state.digest)
 
 
-async def test_files_once_per_project_as_the_bot(app, client, jira, db):
+def filed_titles(jira) -> list[str]:
+    return [json.loads(r.body)["fields"]["summary"] for r in bot_issue_requests(jira)]
+
+
+async def test_files_each_post_once_per_project_as_the_bot(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as bob:
         await connected_user(bob, "bob@example.com")
         await subscribe(bob, ["SEC"])  # same project, second subscriber
+    await backdate_subscriptions(db, 30)
 
     result = await run(app)
-    assert result.outcome == "filed in SEC" and result.post_title == "When a Worm Steals Your Keys"
+    assert result.outcome == "filed 2 tickets in SEC" and result.error is None
+    # Catch-up, oldest first, one ticket per post however many people subscribed the project.
+    assert filed_titles(jira) == ["NHI Blog Digest: Older featured post", "NHI Blog Digest: When a Worm Steals Your Keys"]
 
-    [request] = bot_issue_requests(jira)  # one ticket, not one per subscriber
+    request = bot_issue_requests(jira)[-1]
     assert request.headers["Authorization"].startswith("Basic ")  # created by the bot account
     fields = json.loads(request.body)["fields"]
     assert fields["project"] == {"key": "SEC"}
-    assert fields["summary"] == "NHI Blog Digest: When a Worm Steals Your Keys"
     assert fields["labels"] == ["identityhub", "nhi-blog-digest"]
     description = json.dumps(fields["description"])
     assert "explains why rotating credentials matters" in description
@@ -196,18 +219,104 @@ async def test_files_once_per_project_as_the_bot(app, client, jira, db):
     assert "Summary: extractive summary (no LLM configured)." in description
 
     # Running again files nothing new.
-    assert (await run(app)).outcome == "up to date"
-    assert len(bot_issue_requests(jira)) == 1
-    assert await db.scalar(select(func.count()).select_from(DigestDelivery)) == 1
-
+    assert (await run(app)).outcome.startswith("up to date")
+    assert len(bot_issue_requests(jira)) == 2
     status = (await client.get("/api/digest")).json()
-    assert status["subscriptions"][0]["last_ticket"]["key"] == "SEC-42"
-    assert status["last_run"]["outcome"] == "up to date"
+    assert status["subscriptions"][0]["last_ticket"]["post_title"] == "When a Worm Steals Your Keys"
+
+
+async def test_fresh_start_only_files_posts_published_after_subscribing(app, client, jira, db):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])  # just now: both blog posts are older
+
+    assert (await run(app)).outcome.startswith("up to date")
+    assert bot_issue_requests(jira) == []
+
+    publish_new_post(jira, age_days=-0.01)  # published after the subscription
+    assert (await run(app)).outcome == "filed 1 ticket in SEC"
+    assert filed_titles(jira) == ["NHI Blog Digest: Brand new post"]
+
+
+async def test_catch_up_files_only_posts_newer_than_the_last_digest(app, client, jira, db):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
+    await run(app)  # files the two existing posts
+    publish_new_post(jira)
+
+    assert (await run(app)).outcome == "filed 1 ticket in SEC"
+    assert filed_titles(jira)[-1] == "NHI Blog Digest: Brand new post"
+
+
+async def test_each_post_is_summarized_once_and_stored(app, client, jira, db, monkeypatch):
+    from app.digest.summarizers import ExtractiveSummarizer
+
+    calls = []
+    original = ExtractiveSummarizer.summarize
+
+    async def counting(self, post):
+        calls.append(post.title)
+        return await original(self, post)
+
+    monkeypatch.setattr(ExtractiveSummarizer, "summarize", counting)
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
+    await run(app)
+    assert sorted(calls) == ["Older featured post", "When a Worm Steals Your Keys"]
+
+    # A second project subscribes later and catches up on the same posts: no new model calls.
+    await subscribe(client, ["SEC", "OPS"])
+    await backdate_subscriptions(db, 30)
+    assert (await run(app)).outcome == "filed 2 tickets in OPS"
+    assert len(calls) == 2
+    assert await db.scalar(select(func.count()).select_from(DigestPost)) == 2
+    stored = await db.scalar(select(DigestPost).where(DigestPost.title == "Older featured post"))
+    assert stored.summary.startswith("Key sentences from the post:") and stored.summarizer == "extractive"
+
+
+async def test_catch_up_is_capped_per_run(app, client, jira, db, monkeypatch):
+    from app.services import digest
+
+    monkeypatch.setattr(digest, "MAX_POSTS_PER_PROJECT_PER_RUN", 1)
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
+    assert (await run(app)).outcome == "filed 1 ticket in SEC"
+    assert (await run(app)).outcome == "filed 1 ticket in SEC"
+    assert filed_titles(jira) == ["NHI Blog Digest: Older featured post", "NHI Blog Digest: When a Worm Steals Your Keys"]
+
+
+async def test_failed_summary_stops_the_project_and_is_retried(app, client, jira, db, monkeypatch):
+    from app.digest.summarizers import ExtractiveSummarizer, SummaryError
+
+    original = ExtractiveSummarizer.summarize
+
+    async def flaky(self, post):
+        if post.title == "Older featured post":
+            raise SummaryError("model timed out")
+        return await original(self, post)
+
+    monkeypatch.setattr(ExtractiveSummarizer, "summarize", flaky)
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
+
+    result = await run(app)
+    assert result.outcome == "nothing filed"  # the newer post waits, so order is kept
+    sub = await db.scalar(select(DigestSubscription).execution_options(populate_existing=True))
+    assert sub.last_error == "The summary of 'Older featured post' couldn't be generated: model timed out"
+
+    monkeypatch.setattr(ExtractiveSummarizer, "summarize", original)
+    assert (await run(app)).outcome == "filed 2 tickets in SEC"
+    sub = await db.scalar(select(DigestSubscription).execution_options(populate_existing=True))
+    assert sub.last_error is None
 
 
 async def test_not_filed_when_no_subscriber_still_has_access(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
     jira.jira.replace("GET", f"{JIRA_API}/project/search", json={"values": []})  # alice lost access
 
     result = await run(app)
@@ -219,10 +328,11 @@ async def test_not_filed_when_no_subscriber_still_has_access(app, client, jira, 
 async def test_bot_losing_access_is_reported_on_the_subscription(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
     jira.jira.replace("POST", f"{BOT_API}/issue", json={"errorMessages": ["Forbidden"]}, status=403)
 
     result = await run(app)
-    assert "Skipped SEC" in result.error
+    assert result.error == "Problems in SEC; see the subscription errors."
     sub = await db.scalar(select(DigestSubscription).execution_options(populate_existing=True))
     assert "The IdentityHub bot can no longer create issues in SEC" in sub.last_error
     assert await db.scalar(select(func.count()).select_from(DigestDelivery)) == 0  # retried next run
@@ -236,13 +346,29 @@ async def test_blog_unreachable_fails_cleanly(app, client, jira):
     assert result.outcome == "failed" and "Couldn't fetch" in result.error
 
 
-async def test_run_now_endpoint(app, client, jira):
+async def test_run_now_endpoint(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
     response = await client.post("/api/digest/run", headers=await csrf(client))
     assert response.status_code == 202
     await app.state.digest.task
-    assert (await client.get("/api/digest")).json()["last_run"]["outcome"] == "filed in SEC"
+    assert (await client.get("/api/digest")).json()["last_run"]["outcome"] == "filed 2 tickets in SEC"
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        ("2026-10-06T08:59:00+00:00", "2026-10-06T09:00:00+00:00"),  # later today
+        ("2026-10-06T09:00:00+00:00", "2026-10-07T09:00:00+00:00"),  # exactly now: tomorrow
+        ("2026-10-06T23:30:00+00:00", "2026-10-07T09:00:00+00:00"),
+        ("2026-10-06T12:00:00+03:00", "2026-10-07T09:00:00+00:00"),  # 09:00 UTC already passed
+    ],
+)
+def test_next_run_time_is_a_fixed_utc_time(now, expected):
+    from app.services.digest import next_run_at
+
+    assert next_run_at("09:00", datetime.fromisoformat(now)) == datetime.fromisoformat(expected)
 
 
 async def test_newest_post_is_chosen_by_date_not_position(jira):

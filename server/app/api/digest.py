@@ -1,7 +1,7 @@
 """NHI Blog Digest: status, project subscriptions, and a manual "run now"."""
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -53,7 +53,8 @@ class DigestStatus(BaseModel):
     bot_account: str | None
     site_url: str | None
     summarizer: str | None
-    interval_hours: float
+    daily_at_utc: str = Field(description="Daily run time, HH:MM UTC")
+    next_run_at: datetime | None
     running: bool
     last_run: LastRunOut | None
     subscriptions: list[SubscriptionOut]
@@ -79,7 +80,8 @@ async def get_status(
         bot_account=runtime.bot_account,
         site_url=settings.digest_jira_site_url,
         summarizer=summarizer,
-        interval_hours=settings.digest_interval_hours,
+        daily_at_utc=settings.digest_daily_at,
+        next_run_at=digest.next_run_at(settings.digest_daily_at, datetime.now(UTC)) if settings.digest_configured else None,
         running=runtime.running,
         last_run=LastRunOut(**last.__dict__) if last else None,
         subscriptions=[
@@ -88,7 +90,7 @@ async def get_status(
                 project_name=sub.project_name,
                 last_error=sub.last_error,
                 last_ticket=LastTicket(
-                    key=d.issue_key, url=d.issue_url, post_title=d.post_title, created_at=d.created_at
+                    key=d.issue_key, url=d.issue_url, post_title=d.post.title, created_at=d.created_at
                 )
                 if d
                 else None,

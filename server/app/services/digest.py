@@ -8,23 +8,28 @@ access:
 * A project can only be subscribed if the user *and* the bot can create issues in it.
 * At delivery time, at least one subscriber must still be able to create issues there; if nobody
   can any more, the project gets nothing.
+
+What gets filed: each project has a watermark, the newest post already filed there, or (fresh
+start) when its current subscriptions began. Every run files the recent posts published after the
+watermark that aren't there yet, oldest first, so posts are never skipped. Each post is summarized
+once and stored; every project and every later run reuses that summary.
 """
 
 import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.db.models import DigestDelivery, DigestSubscription, User
+from app.db.models import DigestDelivery, DigestPost, DigestSubscription, User
 from app.db.session import session_scope
-from app.digest.blog import BlogError, BlogPost, fetch_latest_post
+from app.digest.blog import BlogError, BlogPost, fetch_recent_posts
 from app.digest.summarizers import Summarizer, SummaryError, choose_summarizer
 from app.jira import adf, client
 from app.jira.client import BotConnection, JiraTarget
@@ -39,6 +44,8 @@ DIGEST_LABEL = "nhi-blog-digest"
 MAX_SUBSCRIPTIONS = 20
 BOT_CHECK_TTL_SECONDS = 300
 MAX_TITLE = 255
+# Catch-up bound: after a long outage, a project gets at most this many digests in one run.
+MAX_POSTS_PER_PROJECT_PER_RUN = 5
 
 
 # --- Errors -----------------------------------------------------------------------------------
@@ -218,17 +225,17 @@ async def list_subscriptions(db: AsyncSession, user: User) -> list[tuple[DigestS
     return result
 
 
-# --- The run ----------------------------------------------------------------------------------
+# --- The run ---------------------------------------------------------------------------------
 
 
 async def run_digest(settings: Settings, runtime: DigestRuntime) -> LastRun:
-    """File the newest blog post in every subscribed project that hasn't received it yet."""
+    """File every new blog post in every subscribed project that hasn't received it yet."""
     if runtime.running:
         raise DigestAlreadyRunning()
     async with runtime.lock:
         try:
             run = await _run(settings, runtime)
-        except (BlogError, SummaryError) as exc:
+        except BlogError as exc:
             run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=str(exc))
         except Exception as exc:  # keep the scheduler alive, and say what happened
             log.exception("Blog digest run failed")
@@ -246,52 +253,117 @@ async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
     if runtime.bot_error:
         return LastRun(finished_at=datetime.now(UTC), outcome="failed", error=runtime.bot_error)
 
-    post = await fetch_latest_post(settings.digest_blog_url)
+    posts = await fetch_recent_posts(settings.digest_blog_url)  # oldest first
+    newest = posts[-1]
 
     def done(outcome: str, error: str | None = None) -> LastRun:
-        return LastRun(datetime.now(UTC), outcome, post_title=post.title, post_url=post.url, error=error)
+        return LastRun(datetime.now(UTC), outcome, post_title=newest.title, post_url=newest.url, error=error)
 
     async with session_scope() as db:
-        delivered = set(await db.scalars(select(DigestDelivery.project_key).where(DigestDelivery.post_url == post.url)))
-        pending: dict[str, list[DigestSubscription]] = {}
+        subs_by_project: dict[str, list[DigestSubscription]] = {}
         for sub in await db.scalars(select(DigestSubscription)):
-            if sub.project_key not in delivered:
-                pending.setdefault(sub.project_key, []).append(sub)
-        if not pending:
-            return done("up to date")
+            subs_by_project.setdefault(sub.project_key, []).append(sub)
+        if not subs_by_project:
+            return done("no subscribed projects")
 
-        summarizer = await choose_summarizer(settings)
-        summary = await summarizer.summarize(post)  # once, however many projects
-
-        filed, failed = [], []
-        for project_key, subs in sorted(pending.items()):
-            if not await _still_entitled(db, bot, project_key, subs):
-                failed.append(project_key)
-                continue
-            try:
-                await _file_ticket(db, bot, project_key, post, summary, summarizer)
-            except JiraError as exc:
-                message = (
-                    f"The IdentityHub bot can no longer create issues in {project_key}. Ask a Jira admin to grant it access."
-                    if isinstance(exc, (JiraForbidden, JiraNotFound))
-                    else f"Couldn't file the digest in {project_key}: {exc.message}"
+        # Which posts each project is due: newer than its watermark and not filed there yet.
+        plan: dict[str, list[BlogPost]] = {}
+        for project_key, subs in subs_by_project.items():
+            watermark = await _watermark(db, project_key, subs)
+            filed_urls = set(
+                await db.scalars(
+                    select(DigestPost.url).join(DigestDelivery).where(DigestDelivery.project_key == project_key)
                 )
-                for sub in subs:
-                    sub.last_error = message
-                failed.append(project_key)
+            )
+            due = [p for p in posts if p.published > watermark and p.url not in filed_urls]
+            if due:
+                plan[project_key] = due[:MAX_POSTS_PER_PROJECT_PER_RUN]
+        if not plan:
+            return done("up to date: no posts published since the last digest (or since subscribing)")
+
+        stored, summary_errors = await _summaries(db, settings, [p for p in posts if any(p in due for due in plan.values())])
+
+        filed: list[str] = []
+        problems: list[str] = []
+        for project_key, due in sorted(plan.items()):
+            entitled = await _entitled_subscribers(db, bot, project_key, subs_by_project[project_key])
+            if not entitled:
+                problems.append(project_key)
                 continue
-            for sub in subs:
-                sub.last_error = None
-            filed.append(project_key)
+            error = None
+            for post in due:  # oldest first; stop at the first failure so the order is kept
+                digest_post = stored.get(post.url)
+                if digest_post is None:
+                    error = f"The summary of '{post.title}' couldn't be generated: {summary_errors[post.url]}"
+                    break
+                try:
+                    await _file_ticket(db, bot, project_key, digest_post)
+                except JiraError as exc:
+                    error = (
+                        f"The IdentityHub bot can no longer create issues in {project_key}. Ask a Jira admin to grant it access."
+                        if isinstance(exc, (JiraForbidden, JiraNotFound))
+                        else f"Couldn't file the digest in {project_key}: {exc.message}"
+                    )
+                    break
+                filed.append(project_key)
+            # Subscribers who lost access keep their own message; the rest get this run's outcome.
+            for sub in entitled:
+                sub.last_error = error
+            if error:
+                problems.append(project_key)
         await db.commit()
 
-    outcome = f"filed in {', '.join(filed)}" if filed else "nothing filed"
-    return done(outcome, f"Skipped {', '.join(failed)}; see the subscription errors." if failed else None)
+    outcome = f"filed {len(filed)} ticket{'s' * (len(filed) != 1)} in {', '.join(sorted(set(filed)))}" if filed else "nothing filed"
+    return done(outcome, f"Problems in {', '.join(problems)}; see the subscription errors." if problems else None)
 
 
-async def _still_entitled(db: AsyncSession, bot: BotConnection, project_key: str, subs: list[DigestSubscription]) -> bool:
-    """True if at least one subscriber can still create issues in the project on the bot's site."""
-    entitled = False
+async def _watermark(db: AsyncSession, project_key: str, subs: list[DigestSubscription]) -> datetime:
+    """Posts published after this are due in the project: the newest post already filed there, or
+    (fresh start) when the project's current subscriptions began, whichever is later."""
+    subscribed_since = min(s.created_at for s in subs)
+    last_filed = await db.scalar(
+        select(func.max(DigestPost.published_at)).join(DigestDelivery).where(DigestDelivery.project_key == project_key)
+    )
+    return max(subscribed_since, last_filed) if last_filed else subscribed_since
+
+
+async def _summaries(
+    db: AsyncSession, settings: Settings, posts: list[BlogPost]
+) -> tuple[dict[str, DigestPost], dict[str, str]]:
+    """Stored summaries for `posts`, generating (and saving) only the missing ones."""
+    urls = [p.url for p in posts]
+    stored = {d.url: d for d in await db.scalars(select(DigestPost).where(DigestPost.url.in_(urls)))}
+    errors: dict[str, str] = {}
+    summarizer: Summarizer | None = None
+    for post in posts:
+        if post.url in stored:
+            continue
+        try:
+            summarizer = summarizer or await choose_summarizer(settings)
+            text = await summarizer.summarize(post)
+        except SummaryError as exc:
+            errors[post.url] = str(exc)
+            continue
+        digest_post = DigestPost(
+            url=post.url,
+            title=post.title,
+            published_at=post.published,
+            summary=text,
+            summarizer=summarizer.method,
+            summarizer_description=summarizer.description,
+        )
+        db.add(digest_post)
+        await db.commit()  # saved straight away: a later failure must not cost another model call
+        stored[post.url] = digest_post
+    return stored, errors
+
+
+async def _entitled_subscribers(
+    db: AsyncSession, bot: BotConnection, project_key: str, subs: list[DigestSubscription]
+) -> list[DigestSubscription]:
+    """Subscribers who can still create issues in the project on the bot's site. The project gets
+    the digest only if there is at least one; the others are told why they no longer count."""
+    entitled = []
     for sub in subs:
         user = await db.get(User, sub.user_id)
         if user is None or not user.is_active:
@@ -310,21 +382,19 @@ async def _still_entitled(db: AsyncSession, bot: BotConnection, project_key: str
         except JiraError as exc:
             sub.last_error = exc.message
             continue
-        entitled = True
+        entitled.append(sub)
     return entitled
 
 
-async def _file_ticket(
-    db: AsyncSession, bot: JiraTarget, project_key: str, post: BlogPost, summary: str, summarizer: Summarizer
-) -> None:
+async def _file_ticket(db: AsyncSession, bot: JiraTarget, project_key: str, post: DigestPost) -> None:
     title = f"NHI Blog Digest: {post.title}"
     if len(title) > MAX_TITLE:
         title = title[: MAX_TITLE - 1] + "…"
     description = adf.document(
-        *adf.plain_paragraphs(summary),
+        *adf.plain_paragraphs(post.summary),
         adf.paragraph(adf.text("Source: ", "strong"), adf.link(post.url, post.url)),
-        adf.paragraph(adf.text("Published: ", "strong"), adf.text(f"{post.published:%Y-%m-%d}")),
-        adf.paragraph(adf.text(f"Filed by IdentityHub's NHI Blog Digest. Summary: {summarizer.description}.", "em")),
+        adf.paragraph(adf.text("Published: ", "strong"), adf.text(f"{post.published_at:%Y-%m-%d}")),
+        adf.paragraph(adf.text(f"Filed by IdentityHub's NHI Blog Digest. Summary: {post.summarizer_description}.", "em")),
     )
     issue = await client.create_issue(
         bot,
@@ -338,26 +408,31 @@ async def _file_ticket(
     )
     db.add(
         DigestDelivery(
-            post_url=post.url,
-            post_title=post.title,
-            project_key=project_key,
-            issue_key=issue["key"],
-            issue_url=browse_url(bot, issue["key"]),
-            summarizer=summarizer.method,
+            post_id=post.id, project_key=project_key, issue_key=issue["key"], issue_url=browse_url(bot, issue["key"])
         )
     )
+    await db.commit()  # recorded per ticket, so a crash later in the run can't cause a duplicate
 
 
 # --- Scheduling -------------------------------------------------------------------------------
 
 
-async def schedule(settings: Settings, runtime: DigestRuntime, first_delay_seconds: float = 60) -> None:
-    """Run the digest shortly after startup, then every DIGEST_INTERVAL_HOURS. Runs in-process: one
-    instance of the app must run it (see DESIGN.md for multi-replica deployments)."""
-    await asyncio.sleep(first_delay_seconds)
+def next_run_at(daily_at: str, now: datetime) -> datetime:
+    """The next occurrence of `daily_at` (HH:MM, UTC) after `now`."""
+    hour, minute = (int(part) for part in daily_at.split(":"))
+    candidate = now.astimezone(UTC).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return candidate if candidate > now else candidate + timedelta(days=1)
+
+
+async def schedule(settings: Settings, runtime: DigestRuntime, startup_delay_seconds: float = 60) -> None:
+    """A catch-up run shortly after startup (in case the server was down at the scheduled time;
+    cheap, since already-filed posts and stored summaries are reused), then daily at
+    DIGEST_DAILY_AT UTC. In-process: exactly one instance of the app should run it."""
+    await asyncio.sleep(startup_delay_seconds)
     while True:
         try:
             await run_digest(settings, runtime)
         except DigestAlreadyRunning:
             pass
-        await asyncio.sleep(settings.digest_interval_hours * 3600)
+        wait = (next_run_at(settings.digest_daily_at, datetime.now(UTC)) - datetime.now(UTC)).total_seconds()
+        await asyncio.sleep(max(wait, 1))

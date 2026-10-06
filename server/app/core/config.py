@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     digest_jira_email: str | None = None
     digest_jira_api_token: SecretStr | None = None
     digest_blog_url: str = "https://www.oasis.security/blog"
-    digest_interval_hours: float = Field(default=24, gt=0)
+    # Daily run time, HH:MM in UTC. The server also runs a catch-up shortly after it starts.
+    digest_daily_at: str = Field(default="09:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
     # Who writes the summary. "auto" picks the first available: Claude (if ANTHROPIC_API_KEY is
     # set), then a local Ollama model (if reachable), then a built-in extractive summary.

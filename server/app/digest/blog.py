@@ -33,6 +33,11 @@ class BlogPost:
 
 
 async def fetch_latest_post(blog_url: str, candidates: int = CANDIDATES) -> BlogPost:
+    return (await fetch_recent_posts(blog_url, candidates))[-1]
+
+
+async def fetch_recent_posts(blog_url: str, candidates: int = CANDIDATES) -> list[BlogPost]:
+    """The posts linked from the top of the blog index, oldest first (by publish date)."""
     async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=20) as client:
         links = _post_links(await _get(client, blog_url), blog_url)[:candidates]
         if not links:
@@ -42,7 +47,7 @@ async def fetch_latest_post(blog_url: str, candidates: int = CANDIDATES) -> Blog
     posts = await asyncio.to_thread(lambda: [p for url, html in zip(links, pages) if (p := _parse_post(url, html))])
     if not posts:
         raise BlogError("None of the blog posts had a readable title and publish date.")
-    return max(posts, key=lambda p: p.published)
+    return sorted(posts, key=lambda p: p.published)
 
 
 async def _get(client: httpx.AsyncClient, url: str) -> str:

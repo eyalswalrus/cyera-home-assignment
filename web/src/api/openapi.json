@@ -1390,9 +1390,22 @@
             ],
             "title": "Summarizer"
           },
-          "interval_hours": {
-            "type": "number",
-            "title": "Interval Hours"
+          "daily_at_utc": {
+            "type": "string",
+            "title": "Daily At Utc",
+            "description": "Daily run time, HH:MM UTC"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
           },
           "running": {
             "type": "boolean",
@@ -1423,7 +1436,8 @@
           "bot_account",
           "site_url",
           "summarizer",
-          "interval_hours",
+          "daily_at_utc",
+          "next_run_at",
           "running",
           "last_run",
           "subscriptions"

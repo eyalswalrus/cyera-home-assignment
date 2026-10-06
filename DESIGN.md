@@ -520,16 +520,30 @@ per project, errors, last run, and a *Run now* button for demos).
 
 ### The run
 
-- **Schedule:** a background task in the server, shortly after startup, then every
-  `DIGEST_INTERVAL_HOURS` (24 by default). *Run now* triggers the same function.
-- **Newest post:** the blog has no RSS feed, and its index pins an older featured post at the top.
-  The digest takes the first 8 post links, reads each post's schema.org `BlogPosting` JSON-LD, and
-  picks the latest `datePublished` (the post pages show no visible date of their own).
-  `trafilatura` extracts the article text.
-- **Summarized once** per post, however many projects receive it.
-- **Exactly once per (post, project):** a unique `digest_delivery` row is written with each ticket,
-  so two subscribers of the same project get one ticket, and re-runs file nothing new. A failed
-  project gets no row, so it is retried on the next run.
+- **When:** daily at a fixed time, `DIGEST_DAILY_AT` (09:00 UTC by default), so restarts don't
+  shift the schedule. A catch-up run also happens shortly after the server starts, in case it was
+  down at the scheduled time; it is cheap because filed posts and stored summaries are reused.
+  *Run now* in Settings triggers the same function.
+- **Which posts:** the blog has no RSS feed, and its index pins an older featured post at the top.
+  The digest takes the first 8 post links and reads each post's schema.org `BlogPosting` JSON-LD
+  for its `datePublished` (the post pages show no visible date of their own); `trafilatura`
+  extracts the article text.
+- **What each project is due (catch-up and fresh start).** Every project has a *watermark*:
+  - the publish date of the newest post already filed there, or
+  - when its current subscriptions began, if that is later. That is the **fresh start**: a new
+    subscription receives posts published after subscribing, not the existing backlog.
+
+  Each run files the posts published after the watermark that aren't in the project yet, **oldest
+  first**, so a day with two new posts files both. At most 5 per project per run, so a long outage
+  can't flood a project. If a post fails, that project stops there and retries next run, so the
+  order is kept.
+- **Summarized once, stored.** Each post's summary is saved in `digest_post` the moment it is
+  generated, and every project and every later run reuses it, so the model is never asked about
+  the same post twice. A failed summary isn't saved, so it is retried.
+- **Exactly once per (post, project).** A unique `digest_delivery` row is written as each ticket
+  is created, so two subscribers of the same project get one ticket, and re-runs or crashes
+  mid-run can't create duplicates. There is no per-user record because tickets go to projects, not
+  people; the "last ticket" a user sees is the project's latest delivery.
 - **Tickets** carry the labels `identityhub` and `nhi-blog-digest` (so they also appear in the
   project's recent tickets list), a link to the post, its publish date, and which summarizer wrote
   the summary.
@@ -589,8 +603,11 @@ ticket text, so a prompt injection in a post could at worst produce a misleading
 - **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
   while submitting; the API could accept an `Idempotency-Key` header.
 - **API-key rate limits are in memory** (single process), like the login limit.
-- **The digest scheduler runs in-process,** with its last-run status in memory. With several
-  replicas, run it in one (a leader lock, or a separate cron job calling the same function).
+- **The digest scheduler runs in-process,** with its last-run status in memory (summaries and
+  deliveries are in the database). With several replicas, run it in one (a leader lock, or a
+  separate cron job calling the same function).
+- **Stored summaries are kept** even if a better summarizer is configured later; deleting a
+  `digest_post` row would regenerate it for posts not yet filed everywhere.
 - **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
 - **Swagger UI's "Try it out"** can't call cookie-authenticated endpoints, because it doesn't send
   the CSRF header. It is intended for the API-key REST API.

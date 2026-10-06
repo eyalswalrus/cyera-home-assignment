@@ -14,7 +14,7 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
 from fastapi_users_db_sqlalchemy.generics import GUID, TIMESTAMPAware, now_utc
 from sqlalchemy import JSON, Enum, ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.core.crypto import EncryptedJSON
 
@@ -146,18 +146,33 @@ class DigestSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
 
 
-class DigestDelivery(Base):
-    """One digest ticket: a blog post filed in a project. Unique per (post, project), so however
-    many users subscribe a project, and however often the job runs, each post is filed there once."""
+class DigestPost(Base):
+    """A blog post and its summary, generated once and reused for every project that receives it
+    (and every later run), so the model is never asked to summarize the same post twice."""
 
-    __tablename__ = "digest_delivery"
-    __table_args__ = (UniqueConstraint("post_url", "project_key"),)
+    __tablename__ = "digest_post"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
-    post_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    post_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    url: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    summarizer: Mapped[str] = mapped_column(String(32), nullable=False)  # claude | ollama | extractive
+    summarizer_description: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
+
+
+class DigestDelivery(Base):
+    """One digest ticket: a post filed in a project. Unique per (post, project), so however many
+    users subscribe a project, and however often the job runs, each post is filed there once."""
+
+    __tablename__ = "digest_delivery"
+    __table_args__ = (UniqueConstraint("post_id", "project_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    post_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("digest_post.id", ondelete="cascade"), nullable=False)
+    post: Mapped[DigestPost] = relationship(lazy="joined")
     project_key: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     issue_key: Mapped[str] = mapped_column(String(64), nullable=False)
     issue_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    summarizer: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)

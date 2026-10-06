@@ -104,7 +104,9 @@ as Jira tickets in the projects users choose under **Settings → NHI Blog Diges
 
    - **Nothing:** a built-in extractive summary is used, and tickets say so.
 
-The digest runs shortly after startup and then daily; **Run now** in Settings runs it on demand.
+The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`) and once shortly after startup; **Run now**
+in Settings runs it on demand. Each post is summarized once and stored. A new subscription receives
+posts published after subscribing, so expect "up to date" until the blog publishes something new.
 
 ## Architecture
 

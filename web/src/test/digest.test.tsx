@@ -11,7 +11,8 @@ const ready: DigestStatus = {
   bot_account: 'IdentityHub',
   site_url: 'https://acme.atlassian.net',
   summarizer: 'local model llama3.2:3b (Ollama)',
-  interval_hours: 24,
+  daily_at_utc: '09:00',
+  next_run_at: new Date(Date.now() + 3_600_000).toISOString(),
   running: false,
   last_run: {
     finished_at: new Date(Date.now() - 3_600_000).toISOString(),
@@ -56,7 +57,7 @@ describe('NHI Blog Digest settings', () => {
     renderApp('/settings')
 
     expect(await screen.findByText(/bot account, not by you/)).toHaveTextContent(
-      'Tickets are filed on acme.atlassian.net by the IdentityHub bot account, not by you. Summaries: local model llama3.2:3b (Ollama).',
+      'Tickets are filed on acme.atlassian.net by the IdentityHub bot account, not by you. Summaries: local model llama3.2:3b (Ollama). Runs daily at 09:00 UTC',
     )
     const sec = screen.getByLabelText('Digest for SEC')
     expect(within(sec).getByRole('link', { name: /SEC-42/ })).toHaveAttribute('target', '_blank')

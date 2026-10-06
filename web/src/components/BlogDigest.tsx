@@ -59,8 +59,8 @@ function About({ status }: { status: DigestStatus }) {
         ) : (
           'the digest bot account'
         )}
-        , not by you. Summaries: {status.summarizer ?? 'unknown'}. Checks for new posts every {status.interval_hours}{' '}
-        hours.
+        , not by you. Summaries: {status.summarizer ?? 'unknown'}. Runs daily at {status.daily_at_utc} UTC
+        {status.next_run_at && <> (next: {formatDateTime(status.next_run_at)})</>}.
       </Text>
     </Group>
   )
@@ -82,7 +82,7 @@ function SubscriptionEditor({ status }: { status: DigestStatus }) {
       ) : (
         <ProjectMultiSelect
           label="Projects that receive the digest"
-          description="Only projects that both you and the bot can create issues in are listed."
+          description="Only projects that both you and the bot can create issues in are listed. A new subscription receives posts published after you subscribe."
           source="digest"
           maxValues={20}
           value={projects}

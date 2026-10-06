@@ -545,8 +545,13 @@ export interface components {
             site_url: string | null;
             /** Summarizer */
             summarizer: string | null;
-            /** Interval Hours */
-            interval_hours: number;
+            /**
+             * Daily At Utc
+             * @description Daily run time, HH:MM UTC
+             */
+            daily_at_utc: string;
+            /** Next Run At */
+            next_run_at: string | null;
             /** Running */
             running: boolean;
             last_run: components["schemas"]["LastRunOut"] | null;
