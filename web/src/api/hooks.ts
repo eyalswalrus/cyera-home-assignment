@@ -1,3 +1,4 @@
+import { useDebouncedValue } from '@mantine/hooks'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, call } from './client'
 import type { components } from './schema'
@@ -9,6 +10,10 @@ export type Project = components['schemas']['Project']
 export type FindingCreate = components['schemas']['FindingCreate']
 export type FindingCreated = components['schemas']['FindingCreated']
 export type RecentTicket = components['schemas']['RecentTicket']
+export type ApiKey = components['schemas']['ApiKeyOut']
+export type ApiKeyCreate = components['schemas']['ApiKeyCreate']
+export type ApiKeyCreated = components['schemas']['ApiKeyCreated']
+export type ApiKeyScope = components['schemas']['Scope']
 
 export const keys = {
   me: ['me'] as const,
@@ -16,6 +21,7 @@ export const keys = {
   sites: ['jira', 'sites'] as const,
   projects: (query: string) => ['jira', 'projects', query] as const,
   recent: (projectKey: string) => ['findings', 'recent', projectKey] as const,
+  apiKeys: ['api-keys'] as const,
 }
 
 // --- Session ---------------------------------------------------------------------------------
@@ -112,8 +118,22 @@ export function useProjects(query: string, enabled: boolean) {
     queryFn: () => call(api.GET('/api/jira/projects', { params: { query: { query: query || undefined } } })),
     enabled,
     staleTime: 60_000,
-    placeholderData: (previous) => previous, // keep showing results while the next search loads
   })
+}
+
+/** Options for a project picker: the first page of projects (loaded once, so typing filters them
+ * instantly) merged with Jira's server-side search results (for sites with many projects). */
+export function useProjectOptions(search: string, enabled: boolean) {
+  const [query] = useDebouncedValue(search.trim(), 250)
+  const firstPage = useProjects('', enabled)
+  const searched = useProjects(query, enabled && query !== '')
+  const merged = new Map<string, Project>()
+  for (const p of [...(firstPage.data ?? []), ...(query ? (searched.data ?? []) : [])]) merged.set(p.key, p)
+  return {
+    projects: [...merged.values()],
+    isFetching: firstPage.isFetching || searched.isFetching || query !== search.trim(),
+    error: firstPage.error ?? searched.error,
+  }
 }
 
 export function useCreateFinding() {
@@ -137,5 +157,36 @@ export function useRecentTickets(projectKey: string | null) {
     queryFn: () =>
       call(api.GET('/api/findings/recent', { params: { query: { project_key: projectKey! } } })),
     enabled: Boolean(projectKey),
+  })
+}
+
+// --- API keys --------------------------------------------------------------------------------
+
+export function useApiKeys() {
+  return useQuery({ queryKey: keys.apiKeys, queryFn: () => call(api.GET('/api/api-keys')) })
+}
+
+export function useCreateApiKey() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: ApiKeyCreate) => call(api.POST('/api/api-keys', { body })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.apiKeys }),
+  })
+}
+
+export function useUpdateApiKeyNotes() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes: string }) =>
+      call(api.PATCH('/api/api-keys/{key_id}', { params: { path: { key_id: id } }, body: { notes: notes || null } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.apiKeys }),
+  })
+}
+
+export function useRevokeApiKey() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => call(api.DELETE('/api/api-keys/{key_id}', { params: { path: { key_id: id } } })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.apiKeys }),
   })
 }

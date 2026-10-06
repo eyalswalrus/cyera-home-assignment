@@ -365,11 +365,111 @@ react-hook-form + zod for forms, React Router.
 
 ---
 
-## 8. Public REST API **(planned)**
+## 8. Public REST API and API keys
 
-- API keys are shown once at creation and stored only as SHA-256 hashes, with a short visible
-  prefix so users can tell keys apart. A key acts as its owner and uses the owner's Jira
-  connection.
+### The endpoint
+
+`POST /api/v1/findings` takes the same body as the UI (`project_key`, `summary`, optional
+`description`, `finding_type`, `severity`, `identity_name`), so the UI and API share one
+validated contract and one service.
+
+- **Authentication:** `Authorization: Bearer ihub_...`. Only API keys are accepted, never the
+  browser session cookie, which is also why `/api/v1` is exempt from CSRF.
+- **Versioned under `/api/v1`**, so the contract can change without breaking existing scanners.
+- **`201 Created`** with a `Location` header pointing to the new Jira issue, and
+  `{key, url, summary}` in the body.
+- **Documented in OpenAPI** (`/docs`), including the bearer scheme and every error status.
+  Swagger's *Authorize* button works here, because this endpoint doesn't need CSRF.
+
+| Status | When | `code` |
+|---|---|---|
+| 401 | No key; malformed, unknown, revoked or expired key; owner deactivated. Includes `WWW-Authenticate`. | `api_key_missing`, `api_key_invalid`, `api_key_revoked`, `api_key_expired` |
+| 403 | The key lacks the permission or the project; or the owner's Jira account lacks permission | `api_key_scope_missing`, `api_key_project_forbidden`, `jira_forbidden` |
+| 404 | Project not found in Jira, or not visible to the key's owner | `jira_not_found` |
+| 409 | The owner's Jira connection needs attention (not connected, reconnect) | `jira_not_connected`, `jira_reauth_required` |
+| 422 | Invalid body (field-level details), or Jira rejected the ticket | (FastAPI validation), `jira_validation` |
+| 429 | Rate limited (60/min per key, 120/min per IP); includes `Retry-After` | `rate_limited` |
+| 502 | Jira unavailable | `jira_unavailable` |
+
+Checks run cheapest first: authenticate the key, then rate-limit it, then check scope and
+project, and only then call Jira. A refused request never reaches Jira.
+
+### API keys
+
+- **Format and storage:** `ihub_` plus 256 random bits. Only a SHA-256 hash is stored. A fast hash
+  is fine here, unlike for passwords, because the input is already high-entropy and can't be
+  brute-forced. Lookup is one indexed query.
+- **Shown once,** at creation, with a copy button and a ready-made `curl` command. Afterwards the
+  UI shows only the first characters, `ihub_ax3K************`: 4 random characters (about 24 of
+  256 bits) are enough to tell keys apart, and the fixed-length mask doesn't reveal the key's size.
+- **Each key acts as its owner,** through the owner's Jira connection, so Jira permissions still
+  apply on top of the key's own.
+- **Lifecycle:** keys always expire (7, 30, 90, 180 or 365 days; no "never") so a key leaked in a
+  CI log stops working on its own. They can be revoked at any time and show when they were last
+  used. Each user can have at most 20 active keys.
+- **Notes** record what a key is used for and who owns it, and are the only thing that can be
+  edited after creation.
+
+### Permissions: granular, immutable, and built to evolve
+
+Each key carries one permissions document, fixed at creation:
+
+```json
+{"version": 1, "scopes": ["findings:create"], "projects": ["SEC", "PLAT"]}
+```
+
+- **Granular:** *scopes* say which actions a key may perform; today there is one,
+  `findings:create`. *Projects* say where. At creation the server checks with Jira that the owner
+  can create issues in every listed project, so a key can never be granted more than its owner
+  has. "Board" in the brief maps to the Jira *project*: tickets live in projects, and boards are
+  views over them.
+- **Immutable:** the only update endpoint (`PATCH /api/api-keys/{id}`) accepts `notes` and nothing
+  else. Sending `permissions`, `expires_in_days` or `name` returns a 422 rather than being
+  silently ignored. To change what a key can do, create a new key and revoke the old one. This
+  means a key's power can't quietly grow after it has been handed to a CI system, and the stored
+  document is an exact audit record.
+- **New options don't change existing keys.** The rules (also in `app/schemas/api_keys.py`):
+  - A new **action** becomes a new scope. Existing keys don't hold it, so they can't do it.
+  - A new **restriction** (e.g. an IP allowlist or a maximum severity) becomes an optional field
+    whose absence means "not restricted in this dimension". Existing keys behave exactly as
+    before.
+  - Changing the *meaning* of an existing field requires bumping `version` and handling both.
+- **Fail closed:** permissions are re-validated on every request. A document this server doesn't
+  fully understand, for example one with a field added by a newer release that was then rolled
+  back, is refused (401 `api_key_permissions_unreadable`) rather than having the restriction
+  silently ignored. Such a key still appears in the list, so it can be seen and revoked.
+
+### With several users per tenant
+
+Today the tenant is the user, so the owner already has full access to everything in their tenant
+and a key's effective permission is *(the key's scopes and projects) ∩ (the owner's Jira
+permissions)*.
+
+With organizations (section 2), each user would hold a role inside the org, and a key would also
+be capped by its creator's role. Its effective permission becomes *(key) ∩ (creator's role in the
+org) ∩ (creator's Jira permissions)*, so no key can do more than the person who created it:
+
+- Creating a key with a scope or project outside the creator's role is refused, just as projects
+  outside their Jira permissions are refused today.
+- The role is evaluated on **every request**, not copied into the key, so demoting or removing the
+  user (for example through SCIM) immediately narrows or disables their keys.
+- Org admins would see and revoke all keys in the org, and could set policy such as a maximum
+  lifetime or allowed scopes.
+- Keys for unattended systems would belong to a **service account** with its own role, so they
+  don't stop working when an employee leaves (section 3).
+
+### Off-the-shelf alternatives considered
+
+- **Policy engines** (pycasbin in-process; Cerbos or OPA as services) evaluate "can X do Y on Z"
+  from external policy files. Too much for one action plus a project allowlist, but the natural
+  next step once orgs and roles exist; the permissions document above maps directly onto their
+  policy inputs.
+- **Hosted API-key management** (e.g. Unkey, or an API gateway) provides issuing, hashing, expiry,
+  rate limits and per-key permissions as a service, at the cost of an external dependency that
+  breaks "runs with one command".
+- **OAuth2 client credentials** from the customer's IdP (short-lived tokens with scopes) is the
+  standard machine-to-machine pattern and the production direction once SSO exists. The brief asks
+  specifically for an API key, so this POC implements keys.
 
 ---
 
@@ -402,6 +502,7 @@ react-hook-form + zod for forms, React Router.
 - **Expired sessions are rejected but not purged;** production would run a periodic cleanup.
 - **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
   while submitting; the API could accept an `Idempotency-Key` header.
+- **API-key rate limits are in memory** (single process), like the login limit.
 - **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
 - **Swagger UI's "Try it out"** can't call cookie-authenticated endpoints, because it doesn't send
   the CSRF header. It is intended for the API-key REST API.

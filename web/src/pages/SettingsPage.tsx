@@ -5,12 +5,14 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { type JiraConnection, useDisconnectJira, useJiraConnection, useJiraSites, useSelectSite } from '../api/hooks'
 import { JIRA_CONNECT_URL, jiraConnectErrorMessage } from '../api/messages'
+import { ApiKeysSection } from '../components/ApiKeys'
 import { ErrorState } from '../components/ErrorState'
 import { JiraNotReady } from '../components/JiraStatus'
 
 export function SettingsPage() {
+  const connection = useJiraConnection()
   return (
-    <Stack gap="lg" maw={720}>
+    <Stack gap="lg" maw={880}>
       <Title order={1} size="h2">
         Settings
       </Title>
@@ -26,6 +28,23 @@ export function SettingsPage() {
           </div>
           <OAuthResult />
           <JiraConnectionSection />
+        </Stack>
+      </Paper>
+      <Paper withBorder p="lg">
+        <Stack>
+          <div>
+            <Title order={2} size="h4">
+              API keys
+            </Title>
+            <Text size="sm" c="dimmed">
+              Let scanners and CI/CD pipelines create findings through the{' '}
+              <Anchor href="/docs#/public%20API%20v1" target="_blank" rel="noopener noreferrer" inherit>
+                REST API
+              </Anchor>
+              . A key acts as you, can only post to the projects you choose, and expires.
+            </Text>
+          </div>
+          <ApiKeysSection jiraReady={connection.data?.status === 'active'} />
         </Stack>
       </Paper>
     </Stack>

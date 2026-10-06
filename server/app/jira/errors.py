@@ -1,20 +1,15 @@
-"""Jira integration errors, each carrying a user-facing message and a stable machine-readable code.
-
-They are raised from anywhere in the Jira layer and turned into JSON responses by one exception
-handler (see `app.main`), so the UI and API clients always get `{"detail": ..., "code": ...}`.
-"""
+"""Jira integration errors. Like every AppError they carry a user-facing message and a stable code,
+and are rendered as `{"detail": ..., "code": ...}` (see `app.core.errors`)."""
 
 from fastapi import status
 
+from app.core.errors import AppError
 
-class JiraError(Exception):
+
+class JiraError(AppError):
     status_code = status.HTTP_502_BAD_GATEWAY
     code = "jira_error"
     message = "Something went wrong while talking to Jira. Please try again."
-
-    def __init__(self, message: str | None = None) -> None:
-        self.message = message or self.message
-        super().__init__(self.message)
 
 
 class JiraNotConfigured(JiraError):

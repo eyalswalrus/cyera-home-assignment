@@ -115,9 +115,10 @@ async def test_state_changing_requests_require_csrf_token(client):
 
 
 async def test_public_api_is_exempt_from_csrf(client):
-    # /api/v1 authenticates with API keys, not cookies. No such route yet, so a 404 (not a 403)
-    # shows the request got past the CSRF middleware.
-    assert (await client.post("/api/v1/findings")).status_code == 404
+    # /api/v1 authenticates with API keys, not cookies: without a CSRF token the request still
+    # reaches the endpoint, which then asks for an API key (401, not a CSRF 403).
+    response = await client.post("/api/v1/findings", json={})
+    assert response.status_code == 401 and response.json()["code"] == "api_key_missing"
 
 
 async def test_login_is_rate_limited(client):

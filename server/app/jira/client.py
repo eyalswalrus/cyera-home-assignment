@@ -81,10 +81,19 @@ async def get_myself(cloud_id: str, access_token: str) -> dict[str, Any]:
     return await call(client.get_current_user)
 
 
-async def search_projects(conn: ActiveConnection, query: str | None, limit: int) -> list[dict[str, Any]]:
-    """Projects the user may *create issues in* (not merely browse)."""
+async def search_projects(
+    conn: ActiveConnection, query: str | None, limit: int, keys: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Projects the user may *create issues in* (not merely browse), optionally only `keys`."""
     client = build_client(conn.cloud_id, conn.access_token)
-    page = await call(client.search_projects, action="create", query=query or None, max_results=limit, order_by="name")
+    page = await call(
+        client.search_projects,
+        action="create",
+        query=query or None,
+        keys=keys or None,
+        max_results=limit,
+        order_by="name",
+    )
     return page.get("values", [])
 
 

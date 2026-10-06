@@ -226,10 +226,205 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List your API keys */
+        get: operations["list_keys_api_api_keys_get"];
+        put?: never;
+        /** Create an API key (the key is returned once) */
+        post: operations["create_key_api_api_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/api-keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke an API key */
+        delete: operations["revoke_key_api_api_keys__key_id__delete"];
+        options?: never;
+        head?: never;
+        /** Edit an API key's notes (permissions can't be changed) */
+        patch: operations["update_key_api_api_keys__key_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an NHI finding ticket
+         * @description Creates a Jira issue in `project_key`, acting as the API key's owner.
+         *
+         *     The key must be allowed to post to that project, and the owner's Jira account must be able to
+         *     create issues there.
+         */
+        post: operations["create_finding_api_v1_findings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApiKeyCreate */
+        ApiKeyCreate: {
+            /**
+             * Name
+             * @example GitHub Actions - infra repo
+             */
+            name: string;
+            /**
+             * Notes
+             * @description What the key is used for. Editable later.
+             */
+            notes?: string | null;
+            /**
+             * Expires In Days
+             * @default 90
+             * @enum {integer}
+             */
+            expires_in_days?: 7 | 30 | 90 | 180 | 365;
+            permissions: components["schemas"]["ApiKeyPermissions"];
+        };
+        /** ApiKeyCreated */
+        ApiKeyCreated: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Notes */
+            notes: string | null;
+            /**
+             * Prefix
+             * @description First characters of the key, to tell keys apart. Not secret.
+             */
+            prefix: string;
+            permissions: components["schemas"]["ApiKeyPermissions"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "expired" | "revoked";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+            /**
+             * Key
+             * @description The full API key. Shown only once; store it securely.
+             */
+            key: string;
+        };
+        /** ApiKeyOut */
+        ApiKeyOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Notes */
+            notes: string | null;
+            /**
+             * Prefix
+             * @description First characters of the key, to tell keys apart. Not secret.
+             */
+            prefix: string;
+            permissions: components["schemas"]["ApiKeyPermissions"];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "expired" | "revoked";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+        };
+        /**
+         * ApiKeyPermissions
+         * @description What a key may do. Validated the same way when created and every time it is used.
+         */
+        ApiKeyPermissions: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version?: 1;
+            /**
+             * Scopes
+             * @description Actions the key may perform.
+             */
+            scopes: components["schemas"]["Scope"][];
+            /**
+             * Projects
+             * @description Jira projects the key may create tickets in.
+             * @example [
+             *       "SEC"
+             *     ]
+             */
+            projects: string[];
+        };
+        /**
+         * ApiKeyUpdate
+         * @description Only notes can change after creation. Permissions, expiry and name are fixed: sending them
+         *     is rejected (extra="forbid") rather than silently ignored.
+         */
+        ApiKeyUpdate: {
+            /**
+             * Notes
+             * @description What the key is used for. Editable later.
+             */
+            notes: string | null;
+        };
         /** Body_auth_session_login_api_auth_login_post */
         Body_auth_session_login_api_auth_login_post: {
             /** Grant Type */
@@ -354,6 +549,12 @@ export interface components {
              */
             created_at: string;
         };
+        /**
+         * Scope
+         * @description Actions an API key can be granted. Add new actions here; never repurpose a value.
+         * @enum {string}
+         */
+        Scope: "findings:create";
         /** SelectSiteIn */
         SelectSiteIn: {
             /** Cloud Id */
@@ -837,6 +1038,196 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    list_keys_api_api_keys_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyOut"][];
+                };
+            };
+        };
+    };
+    create_key_api_api_keys_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_key_api_api_keys__key_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_key_api_api_keys__key_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_finding_api_v1_findings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FindingCreate"];
+            };
+        };
+        responses: {
+            /** @description The created Jira issue. `Location` points to it. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingCreated"];
+                };
+            };
+            /** @description Missing, invalid, revoked or expired API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The key lacks the permission or project, or its owner lacks Jira permission */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Project not found in Jira, or not visible to the key owner */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The key owner's Jira connection needs attention (not connected / reconnect) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid input, or Jira rejected the ticket */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rate limit exceeded; see the Retry-After header */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Jira is unavailable */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

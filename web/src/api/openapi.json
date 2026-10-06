@@ -541,10 +541,541 @@
           }
         }
       }
+    },
+    "/api/api-keys": {
+      "get": {
+        "tags": [
+          "api keys"
+        ],
+        "summary": "List your API keys",
+        "operationId": "list_keys_api_api_keys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ApiKeyOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Keys Api Api Keys Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "api keys"
+        ],
+        "summary": "Create an API key (the key is returned once)",
+        "operationId": "create_key_api_api_keys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreated"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/api-keys/{key_id}": {
+      "patch": {
+        "tags": [
+          "api keys"
+        ],
+        "summary": "Edit an API key's notes (permissions can't be changed)",
+        "operationId": "update_key_api_api_keys__key_id__patch",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Key Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "api keys"
+        ],
+        "summary": "Revoke an API key",
+        "operationId": "revoke_key_api_api_keys__key_id__delete",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Key Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/findings": {
+      "post": {
+        "tags": [
+          "public API v1"
+        ],
+        "summary": "Create an NHI finding ticket",
+        "description": "Creates a Jira issue in `project_key`, acting as the API key's owner.\n\nThe key must be allowed to post to that project, and the owner's Jira account must be able to\ncreate issues there.",
+        "operationId": "create_finding_api_v1_findings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindingCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The created Jira issue. `Location` points to it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingCreated"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked or expired API key"
+          },
+          "403": {
+            "description": "The key lacks the permission or project, or its owner lacks Jira permission"
+          },
+          "404": {
+            "description": "Project not found in Jira, or not visible to the key owner"
+          },
+          "409": {
+            "description": "The key owner's Jira connection needs attention (not connected / reconnect)"
+          },
+          "422": {
+            "description": "Invalid input, or Jira rejected the ticket"
+          },
+          "429": {
+            "description": "Rate limit exceeded; see the Retry-After header"
+          },
+          "502": {
+            "description": "Jira is unavailable"
+          }
+        },
+        "security": [
+          {
+            "ApiKey": []
+          }
+        ]
+      }
     }
   },
   "components": {
     "schemas": {
+      "ApiKeyCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "examples": [
+              "GitHub Actions - infra repo"
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "What the key is used for. Editable later."
+          },
+          "expires_in_days": {
+            "type": "integer",
+            "enum": [
+              7,
+              30,
+              90,
+              180,
+              365
+            ],
+            "title": "Expires In Days",
+            "default": 90
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/ApiKeyPermissions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "permissions"
+        ],
+        "title": "ApiKeyCreate"
+      },
+      "ApiKeyCreated": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "First characters of the key, to tell keys apart. Not secret."
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/ApiKeyPermissions"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "revoked"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "The full API key. Shown only once; store it securely."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "notes",
+          "prefix",
+          "permissions",
+          "status",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked_at",
+          "key"
+        ],
+        "title": "ApiKeyCreated"
+      },
+      "ApiKeyOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "First characters of the key, to tell keys apart. Not secret."
+          },
+          "permissions": {
+            "$ref": "#/components/schemas/ApiKeyPermissions"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "revoked"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "notes",
+          "prefix",
+          "permissions",
+          "status",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked_at"
+        ],
+        "title": "ApiKeyOut"
+      },
+      "ApiKeyPermissions": {
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Version",
+            "default": 1
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Scopes",
+            "description": "Actions the key may perform."
+          },
+          "projects": {
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,19}$",
+              "examples": [
+                "SEC"
+              ]
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Projects",
+            "description": "Jira projects the key may create tickets in.",
+            "examples": [
+              [
+                "SEC"
+              ]
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scopes",
+          "projects"
+        ],
+        "title": "ApiKeyPermissions",
+        "description": "What a key may do. Validated the same way when created and every time it is used."
+      },
+      "ApiKeyUpdate": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "What the key is used for. Editable later."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "notes"
+        ],
+        "title": "ApiKeyUpdate",
+        "description": "Only notes can change after creation. Permissions, expiry and name are fixed: sending them\nis rejected (extra=\"forbid\") rather than silently ignored."
+      },
       "Body_auth_session_login_api_auth_login_post": {
         "properties": {
           "grant_type": {
@@ -864,6 +1395,14 @@
         ],
         "title": "RecentTicket"
       },
+      "Scope": {
+        "type": "string",
+        "enum": [
+          "findings:create"
+        ],
+        "title": "Scope",
+        "description": "Actions an API key can be granted. Add new actions here; never repurpose a value."
+      },
       "SelectSiteIn": {
         "properties": {
           "cloud_id": {
@@ -1046,6 +1585,11 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "identityhub_session"
+      },
+      "ApiKey": {
+        "type": "http",
+        "description": "An IdentityHub API key (`ihub_...`), created under Settings \u2192 API keys.",
+        "scheme": "bearer"
       }
     }
   }

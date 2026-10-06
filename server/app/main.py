@@ -9,13 +9,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from app.api import auth, findings, health, jira
+from app.api import api_keys, auth, findings, health, jira, v1
 from app.core.config import get_settings
 from app.core.csrf import JSONCSRFMiddleware
+from app.core.errors import AppError
 from app.core.rate_limit import build_rate_limiter
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.db.session import close_db, init_db
-from app.jira.errors import JiraError
 from app.jira.oauth import build_oauth
 
 
@@ -70,10 +70,12 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     app.include_router(jira.router, prefix="/api")
     app.include_router(findings.router, prefix="/api")
+    app.include_router(api_keys.router, prefix="/api")
+    app.include_router(v1.router, prefix="/api")
 
-    @app.exception_handler(JiraError)
-    async def jira_error_handler(request: Request, exc: JiraError) -> JSONResponse:
-        return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=exc.status_code)
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+        return JSONResponse({"detail": exc.message, "code": exc.code}, status_code=exc.status_code, headers=exc.headers)
 
     # Mounted last so /api routes take precedence.
     if settings.static_dir and settings.static_dir.is_dir():

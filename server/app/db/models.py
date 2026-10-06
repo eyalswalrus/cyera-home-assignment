@@ -13,7 +13,7 @@ from typing import Any
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
 from fastapi_users_db_sqlalchemy.generics import GUID, TIMESTAMPAware, now_utc
-from sqlalchemy import Enum, ForeignKey, String
+from sqlalchemy import JSON, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.core.crypto import EncryptedJSON
@@ -79,18 +79,27 @@ class JiraConnection(Base):
 
 
 class ApiKey(Base):
-    """Credential for the public REST API. Only a SHA-256 hash of the key is stored; the
-    plaintext is shown to the user once at creation time."""
+    """Credential for the public REST API, acting as its owner through the owner's Jira connection.
+
+    Only a SHA-256 hash of the key is stored; the plaintext is shown to the user once at creation.
+    Each key expires and carries an immutable, versioned permissions document (see
+    `app.schemas.api_keys.ApiKeyPermissions`); Jira's own permissions for the owner apply on top.
+    """
 
     __tablename__ = "api_key"
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = _user_fk()
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Free text about what the key is used for; the only thing editable after creation.
+    notes: Mapped[str | None] = mapped_column(Text)
     # Non-secret leading characters, so users can tell keys apart in the UI.
     prefix: Mapped[str] = mapped_column(String(16), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # e.g. {"version": 1, "scopes": ["findings:create"], "projects": ["SEC"]}. Never modified.
+    permissions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMPAware(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMPAware(timezone=True))
 

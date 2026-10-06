@@ -1,25 +1,23 @@
 import { Loader, Select } from '@mantine/core'
-import { useDebouncedValue } from '@mantine/hooks'
 import { useState } from 'react'
-import { type Project, useProjects } from '../api/hooks'
+import { type Project, useProjectOptions } from '../api/hooks'
 
 const optionLabel = (p: Project) => `${p.name} (${p.key})`
 
-/** Searchable project picker. Filtering happens in Jira (by name or key), so it scales to sites
- * with hundreds of projects, and only projects the user can create issues in are offered. */
+/** Searchable project picker. Search runs in Jira (by name or key), so it scales to sites with
+ * hundreds of projects, and only projects the user can create issues in are offered. */
 export function ProjectPicker({ value, onChange }: { value: Project | null; onChange: (p: Project | null) => void }) {
   const [search, setSearch] = useState('')
   const [opened, setOpened] = useState(false)
   // Once a project is picked, the input shows its label; don't send that label as a search.
   const query = value && search === optionLabel(value) ? '' : search.trim()
-  const [debouncedQuery] = useDebouncedValue(query, 250)
-  const projects = useProjects(debouncedQuery, opened || !value)
+  const projects = useProjectOptions(query, opened || !value)
 
   // Keep the selected project in the options so the input can display it.
-  const options = [...(projects.data ?? [])]
+  const options = [...projects.projects]
   if (value && !options.some((p) => p.key === value.key)) options.unshift(value)
 
-  const searching = projects.isFetching || debouncedQuery !== query
+  const searching = projects.isFetching
   return (
     <Select
       label="Jira project"
@@ -31,7 +29,9 @@ export function ProjectPicker({ value, onChange }: { value: Project | null; onCh
       data={options.map((p) => ({ value: p.key, label: optionLabel(p) }))}
       value={value?.key ?? null}
       onChange={(key) => onChange(options.find((p) => p.key === key) ?? null)}
-      filter={({ options: items }) => items} // already filtered by Jira
+      // Typing narrows the loaded options instantly (Jira search fills in the rest) and highlights
+      // the first match, so Enter picks it.
+      selectFirstOptionOnChange
       onDropdownOpen={() => setOpened(true)}
       onDropdownClose={() => setOpened(false)}
       nothingFoundMessage={

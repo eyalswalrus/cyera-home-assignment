@@ -71,6 +71,20 @@ cd web && npm run gen:api
 Dependencies are locked on both sides (`server/uv.lock`, `web/package-lock.json`), and the
 Docker build installs from those lock files only (`uv sync --locked`, `npm ci`).
 
+## Using the REST API
+
+Create a key under **Settings → API keys**: choose the projects it may post to and how long it
+lives; it is shown once. Then:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/findings \
+  -H "Authorization: Bearer ihub_..." \
+  -H "Content-Type: application/json" \
+  -d '{"project_key": "SEC", "summary": "Stale Service Account: svc-deploy-prod", "severity": "high"}'
+```
+
+Interactive documentation for every endpoint and error is at http://localhost:8000/docs.
+
 ## Architecture
 
 ```
