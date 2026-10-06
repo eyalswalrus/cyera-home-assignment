@@ -5,70 +5,27 @@ requests-based Jira REST calls made through atlassian-python-api.
 """
 
 import asyncio
-import re
 import time
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
-import respx
 from httpx import ASGITransport, AsyncClient
-from responses import RequestsMock
 from sqlalchemy import select, text
 
 from app.db.models import JiraConnection
 from app.jira.oauth import ACCESSIBLE_RESOURCES_URL, TOKEN_URL
-from helpers import csrf, sign_up_and_login
-
-SITE_A = {"id": "cloud-a", "url": "https://acme.atlassian.net", "name": "acme", "scopes": ["write:jira-work"]}
-SITE_B = {"id": "cloud-b", "url": "https://globex.atlassian.net", "name": "globex", "scopes": ["write:jira-work"]}
-CONFLUENCE_ONLY = {"id": "cloud-c", "url": "https://wiki.atlassian.net", "name": "wiki", "scopes": ["read:confluence"]}
-
-
-def token_response(access: str = "access-1", refresh: str = "refresh-1") -> httpx.Response:
-    return httpx.Response(
-        200,
-        json={
-            "access_token": access,
-            "refresh_token": refresh,
-            "expires_in": 3600,
-            "token_type": "Bearer",
-            "scope": "read:jira-work write:jira-work read:jira-user offline_access",
-        },
-    )
-
-
-@pytest.fixture
-def atlassian():
-    """Mocked Atlassian endpoints. Tests may override `sites` / `token` routes."""
-    with respx.mock(assert_all_called=False) as mock, RequestsMock(assert_all_requests_are_fired=False) as jira:
-        mock.post(TOKEN_URL).mock(return_value=token_response())
-        mock.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[SITE_A, CONFLUENCE_ONLY]))
-        jira.get(
-            re.compile(r"https://api\.atlassian\.com/ex/jira/[^/]+/rest/api/3/myself"),
-            json={"accountId": "acc-123", "displayName": "Alice Atlassian"},
-        )
-        yield mock
-
-
-async def start_connect(client: AsyncClient) -> dict[str, list[str]]:
-    response = await client.get("/api/jira/connect")
-    assert response.status_code == 302
-    location = urlparse(response.headers["location"])
-    assert f"{location.scheme}://{location.netloc}{location.path}" == "https://auth.atlassian.com/authorize"
-    return parse_qs(location.query)
-
-
-async def complete_connect(client: AsyncClient, state: str, **extra: str) -> str:
-    response = await client.get("/api/jira/callback", params={"code": "auth-code", "state": state, **extra})
-    assert response.status_code == 302
-    return response.headers["location"]
-
-
-async def connect(client: AsyncClient) -> str:
-    params = await start_connect(client)
-    return await complete_connect(client, params["state"][0])
-
+from helpers import (
+    CONFLUENCE_ONLY,
+    SITE_A,
+    SITE_B,
+    complete_connect,
+    connect,
+    csrf,
+    sign_up_and_login,
+    start_connect,
+    token_response,
+)
 
 async def expire_token(db) -> None:
     connection = await db.scalar(select(JiraConnection))
@@ -93,7 +50,7 @@ async def test_connect_flow(client, atlassian, db):
     assert location == "http://localhost:8000/settings?jira=connected"
 
     # The code exchange sent the code, our callback URL and the client credentials.
-    token_call = next(c for c in atlassian.calls if str(c.request.url) == TOKEN_URL)
+    token_call = next(c for c in atlassian.oauth.calls if str(c.request.url) == TOKEN_URL)
     body = parse_qs(token_call.request.content.decode())
     assert body["grant_type"] == ["authorization_code"] and body["code"] == ["auth-code"]
     assert body["client_secret"] == ["test-client-secret"]
@@ -139,7 +96,7 @@ async def test_disconnect(client, atlassian, db):
 
 
 async def test_multiple_sites_require_a_choice(client, atlassian):
-    atlassian.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[SITE_A, SITE_B]))
+    atlassian.oauth.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[SITE_A, SITE_B]))
     await sign_up_and_login(client, "alice@example.com")
 
     assert await connect(client) == "http://localhost:8000/settings?jira=choose_site"
@@ -152,7 +109,7 @@ async def test_multiple_sites_require_a_choice(client, atlassian):
 
 
 async def test_cannot_select_a_site_the_account_cannot_access(client, atlassian):
-    atlassian.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[SITE_A, SITE_B]))
+    atlassian.oauth.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[SITE_A, SITE_B]))
     await sign_up_and_login(client, "alice@example.com")
     await connect(client)
 
@@ -163,7 +120,7 @@ async def test_cannot_select_a_site_the_account_cannot_access(client, atlassian)
 
 
 async def test_account_without_jira_sites(client, atlassian):
-    atlassian.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[CONFLUENCE_ONLY]))
+    atlassian.oauth.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[CONFLUENCE_ONLY]))
     await sign_up_and_login(client, "alice@example.com")
 
     assert await connect(client) == "http://localhost:8000/settings?jira_error=jira_no_sites"
@@ -189,13 +146,13 @@ async def test_forged_state_is_rejected(client, atlassian):
 
 
 async def test_rejected_code_exchange_is_not_reported_as_state_mismatch(client, atlassian):
-    atlassian.post(TOKEN_URL).mock(return_value=httpx.Response(401, json={"error": "invalid_client"}))
+    atlassian.oauth.post(TOKEN_URL).mock(return_value=httpx.Response(401, json={"error": "invalid_client"}))
     await sign_up_and_login(client, "alice@example.com")
     assert await connect(client) == "http://localhost:8000/settings?jira_error=token_exchange_failed"
 
 
 async def test_atlassian_unreachable_during_callback(client, atlassian):
-    atlassian.post(TOKEN_URL).mock(side_effect=httpx.ConnectError("down"))
+    atlassian.oauth.post(TOKEN_URL).mock(side_effect=httpx.ConnectError("down"))
     await sign_up_and_login(client, "alice@example.com")
     assert await connect(client) == "http://localhost:8000/settings?jira_error=jira_unavailable"
 
@@ -243,11 +200,11 @@ async def test_expired_token_is_refreshed_and_rotated(client, atlassian, db):
     await sign_up_and_login(client, "alice@example.com")
     await connect(client)
     await expire_token(db)
-    atlassian.post(TOKEN_URL).mock(return_value=token_response("access-2", "refresh-2"))
+    atlassian.oauth.post(TOKEN_URL).mock(return_value=token_response("access-2", "refresh-2"))
 
     assert (await client.get("/api/jira/sites")).status_code == 200
 
-    refresh_call = next(c for c in reversed(atlassian.calls) if str(c.request.url) == TOKEN_URL)
+    refresh_call = next(c for c in reversed(atlassian.oauth.calls) if str(c.request.url) == TOKEN_URL)
     body = parse_qs(refresh_call.request.content.decode())
     assert body["grant_type"] == ["refresh_token"] and body["refresh_token"] == ["refresh-1"]
 
@@ -290,7 +247,7 @@ async def test_revoked_refresh_token_asks_user_to_reconnect(client, atlassian, d
     await sign_up_and_login(client, "alice@example.com")
     await connect(client)
     await expire_token(db)
-    atlassian.post(TOKEN_URL).mock(return_value=httpx.Response(400, json={"error": "invalid_grant"}))
+    atlassian.oauth.post(TOKEN_URL).mock(return_value=httpx.Response(400, json={"error": "invalid_grant"}))
 
     response = await client.get("/api/jira/sites")
     assert response.status_code == 409
@@ -301,7 +258,7 @@ async def test_revoked_refresh_token_asks_user_to_reconnect(client, atlassian, d
     assert (await client.get("/api/jira/connection")).json()["status"] == "needs_reauth"
 
     # Reconnecting restores the connection.
-    atlassian.post(TOKEN_URL).mock(return_value=token_response("access-3", "refresh-3"))
+    atlassian.oauth.post(TOKEN_URL).mock(return_value=token_response("access-3", "refresh-3"))
     assert await connect(client) == "http://localhost:8000/settings?jira=connected"
     assert (await client.get("/api/jira/connection")).json()["status"] == "active"
 
@@ -310,7 +267,7 @@ async def test_atlassian_outage_is_reported_without_logging_user_out(client, atl
     await sign_up_and_login(client, "alice@example.com")
     await connect(client)
     await expire_token(db)
-    atlassian.post(TOKEN_URL).mock(side_effect=httpx.ConnectError("down"))
+    atlassian.oauth.post(TOKEN_URL).mock(side_effect=httpx.ConnectError("down"))
 
     response = await client.get("/api/jira/sites")
     assert response.status_code == 502 and response.json()["code"] == "jira_unavailable"

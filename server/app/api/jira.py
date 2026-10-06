@@ -5,12 +5,12 @@ back to the UI. Failures travel as a fixed error code in the query string (never
 message or a caller-supplied URL), which the UI turns into a readable message.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlencode
 
 import httpx
 from authlib.integrations.base_client import MismatchingStateError, OAuthError
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +21,8 @@ from app.db.models import JiraConnectionStatus, User
 from app.db.session import get_db
 from app.jira.errors import JiraError
 from app.jira.oauth import callback_url
-from app.services import jira_connection
+from app.schemas.findings import Project
+from app.services import findings, jira_connection
 
 router = APIRouter(prefix="/jira", tags=["jira"])
 
@@ -130,3 +131,12 @@ async def select_site(
 @router.delete("/connection", status_code=status.HTTP_204_NO_CONTENT, summary="Disconnect Jira")
 async def disconnect(user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)) -> None:
     await jira_connection.disconnect(db, user)
+
+
+@router.get("/projects", summary="Projects the user can create issues in")
+async def list_projects(
+    query: Annotated[str | None, Query(max_length=100, description="Filter by project name or key")] = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[Project]:
+    return await findings.list_projects(db, user, query)

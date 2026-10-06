@@ -222,13 +222,77 @@ status, a stable `code` and a user-facing message. One exception handler turns t
 
 ---
 
-## 5. Tickets and scope **(planned)**
+## 5. Tickets: what we support and why
 
-- **Projects:** only projects the user can *create issues in*
-  (`/project/search?action=create`), not every project they can view.
-- **Recent tickets:** IdentityHub labels every issue it creates, and the list is a JQL search on
-  that label, ordered by creation date, limited to 10. Jira is the source of truth, so renames,
-  deletions and tickets created through the REST API all show correctly.
+### Projects
+
+- **Only projects the user can create issues in** (`/project/search?action=create`), not every
+  project they can browse, so the picker never offers a project that would fail on submit.
+- **Searchable, 50 at a time.** The picker filters by name or key on the server; users with many
+  projects type to narrow the list rather than scrolling through hundreds.
+
+### Fields
+
+| Field | Required | Goes to Jira as | Why |
+|---|---|---|---|
+| Project | yes | `project` | Picked from the list above. Keys are validated and upper-cased. |
+| Title | yes | `summary` | 1–255 characters, single line (Jira's own limits). |
+| Description | no | `description` | Free text, up to 30,000 characters. |
+| Finding type | no | Description header + label `nhi-<type>` | Stale identity, over-privileged, expiring credential, exposed secret, other: the problems named in the brief. |
+| Severity | no | Description header + label `severity-<level>` | Critical / high / medium / low. |
+| Identity | no | Description header | The affected service account, key or principal. |
+
+**Why NHI details go into the description and labels rather than Jira fields:** Jira projects
+differ. *Priority* has per-project schemes, *Components* must already exist, and custom fields
+have per-site ids. Writing to them would fail on many projects. Description and labels exist
+everywhere, labels are searchable in JQL (e.g. `labels = severity-critical`), and the result reads
+well in Jira.
+
+**Issue type:** the first of Task, Bug or Story the project offers, otherwise any non-subtask
+type. A project with no usable type gets a clear message. Type names come back in the user's
+Jira language, so on a non-English site the fallback usually applies.
+
+**Out of scope:** projects whose create screen has *required custom fields*. Jira rejects those
+tickets and the user sees Jira's own reason, e.g. "Jira rejected the request: Team is required."
+Supporting them would mean reading each project's create metadata and rendering dynamic form
+fields.
+
+**Description format:** Jira's v3 API needs Atlassian Document Format (ADF). A small converter
+(`app/jira/adf.py`) turns plain text into paragraphs and line breaks and never interprets markup,
+so `svc_deploy_prod` stays literal. The v2 API would take plain text but reads it as wiki markup,
+where underscores can become italics. No mainstream Python ADF library exists, and the converter
+is about 20 lines.
+
+### Recent tickets
+
+- **Every ticket IdentityHub creates carries the label `identityhub`.** "Recent tickets" is the JQL
+  search `project = "<KEY>" AND labels = "identityhub" ORDER BY created DESC`, limited to 10.
+- **Jira is the source of truth:** renamed, moved or deleted issues show correctly, and tickets
+  created through the REST API appear too.
+- **It runs as the user,** so it shows only issues they are allowed to see. That includes tickets
+  that *other* IdentityHub users created in the same project, which is what "created from this
+  app" means. Showing only the user's own tickets would be a one-line change
+  (`AND reporter = currentUser()`).
+- **Caveat:** anyone can add the `identityhub` label to an issue by hand. Atlassian's
+  non-editable alternative, indexed issue properties, is only available to Forge and Connect apps.
+- **JQL injection:** the project key is validated against `^[A-Z][A-Z0-9_]{1,19}$` before it is
+  placed in the query.
+- A local `finding` table also records every ticket created (who, from the UI or API, which key),
+  as an audit trail independent of Jira.
+
+### Jira errors users will actually see
+
+| Jira says | User sees | HTTP |
+|---|---|---|
+| 400 (e.g. required field) | "Jira rejected the request: *Jira's reason*" | 422 |
+| 401 | "Reconnect Jira" (connection marked `needs_reauth`) | 409 |
+| 403 | "Your Jira account doesn't have permission to create issues in SEC." | 403 |
+| 404 | "Project SEC wasn't found, or your Jira account can't access it." | 404 |
+| 429 | "Jira is receiving too many requests right now…" | 429 |
+| 5xx / network | "Jira couldn't be reached. Please try again in a moment." | 502 |
+
+Input problems (missing title, unknown fields, invalid project key) are rejected with a 422
+*before* Jira is called.
 
 ---
 
@@ -282,6 +346,8 @@ status, a stable `code` and a user-facing message. One exception handler turns t
 - **Rate limits are per IP and in memory** (single process). Production: a shared store (Redis)
   and an additional per-account limit against distributed credential stuffing.
 - **Expired sessions are rejected but not purged;** production would run a periodic cleanup.
+- **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
+  while submitting; the API could accept an `Idempotency-Key` header.
 - **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
 - **Swagger UI's "Try it out"** can't call cookie-authenticated endpoints, because it doesn't send
   the CSRF header. It is intended for the API-key REST API.

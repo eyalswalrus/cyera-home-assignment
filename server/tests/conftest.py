@@ -1,10 +1,17 @@
+import re
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
+import httpx
+import respx
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from responses import RequestsMock
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.jira.oauth import ACCESSIBLE_RESOURCES_URL, TOKEN_URL
+from helpers import CONFLUENCE_ONLY, SITE_A, MockAtlassian, token_response
 
 
 @pytest.fixture(autouse=True)
@@ -58,3 +65,20 @@ async def app() -> AsyncIterator[FastAPI]:
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture
+def atlassian() -> Iterator[MockAtlassian]:
+    """Mocked Atlassian: OAuth endpoints (respx) and Jira REST (responses). Tests add or override
+    routes as needed."""
+    with (
+        respx.mock(assert_all_called=False) as oauth,
+        RequestsMock(assert_all_requests_are_fired=False) as jira,
+    ):
+        oauth.post(TOKEN_URL).mock(return_value=token_response())
+        oauth.get(ACCESSIBLE_RESOURCES_URL).mock(return_value=httpx.Response(200, json=[SITE_A, CONFLUENCE_ONLY]))
+        jira.get(
+            re.compile(r"https://api\.atlassian\.com/ex/jira/[^/]+/rest/api/3/myself"),
+            json={"accountId": "acc-123", "displayName": "Alice Atlassian"},
+        )
+        yield MockAtlassian(oauth=oauth, jira=jira)

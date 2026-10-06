@@ -5,16 +5,17 @@ import asyncio
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import JiraConnection, JiraConnectionStatus, User
 from app.jira import oauth
-from app.jira.client import get_myself
+from app.jira.client import ActiveConnection, get_myself
 from app.jira.errors import (
     JiraNoSites,
     JiraNotConfigured,
@@ -32,13 +33,6 @@ REFRESH_MARGIN_SECONDS = 60
 # the second would present a refresh token the first had just invalidated, and the user would be
 # logged out of Jira. In-process only - several workers would need a distributed lock.
 _refresh_locks: defaultdict[uuid.UUID, asyncio.Lock] = defaultdict(asyncio.Lock)
-
-
-@dataclass(frozen=True)
-class ActiveConnection:
-    cloud_id: str
-    site_url: str
-    access_token: str
 
 
 def require_configured() -> None:
@@ -101,6 +95,23 @@ async def get_active_connection(db: AsyncSession, user: User) -> ActiveConnectio
     access_token = await _access_token(db, connection)
     assert connection.cloud_id is not None and connection.site_url is not None
     return ActiveConnection(connection.cloud_id, connection.site_url, access_token)
+
+
+@asynccontextmanager
+async def use_jira(db: AsyncSession, user: User) -> AsyncIterator[ActiveConnection]:
+    """Call Jira as `user`. If Jira rejects the token anyway (e.g. the user revoked the app in their
+    Atlassian account), the connection is marked as needing reauthorization so the UI says so."""
+    active = await get_active_connection(db, user)
+    try:
+        yield active
+    except JiraReauthRequired:
+        await db.execute(
+            update(JiraConnection)
+            .where(JiraConnection.user_id == user.id)
+            .values(status=JiraConnectionStatus.NEEDS_REAUTH)
+        )
+        await db.commit()
+        raise
 
 
 async def _require_connection(db: AsyncSession, user: User) -> JiraConnection:

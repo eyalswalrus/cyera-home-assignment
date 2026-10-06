@@ -60,3 +60,33 @@ class JiraUnavailable(JiraError):
     status_code = status.HTTP_502_BAD_GATEWAY
     code = "jira_unavailable"
     message = "Jira couldn't be reached. Please try again in a moment."
+
+
+class JiraForbidden(JiraError):
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "jira_forbidden"
+    message = "Your Jira account doesn't have permission to do that."
+
+
+class JiraNotFound(JiraError):
+    status_code = status.HTTP_404_NOT_FOUND
+    code = "jira_not_found"
+    message = "That wasn't found in Jira, or your Jira account can't access it."
+
+
+class JiraValidationError(JiraError):
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "jira_validation"
+    message = "Jira rejected the request."
+
+
+class JiraRateLimited(JiraError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "jira_rate_limited"
+    message = "Jira is receiving too many requests right now. Please wait a moment and try again."
+
+
+class JiraProjectUnsupported(JiraError):
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    code = "jira_project_unsupported"
+    message = "This project has no issue type IdentityHub can create (such as Task or Bug)."

@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from app.api import auth, health, jira
+from app.api import auth, findings, health, jira
 from app.core.config import get_settings
 from app.core.csrf import JSONCSRFMiddleware
 from app.core.rate_limit import build_rate_limiter
@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(jira.router, prefix="/api")
+    app.include_router(findings.router, prefix="/api")
 
     @app.exception_handler(JiraError)
     async def jira_error_handler(request: Request, exc: JiraError) -> JSONResponse:
