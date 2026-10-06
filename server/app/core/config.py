@@ -39,7 +39,7 @@ class Settings(BaseSettings):
             build_fernet(value.get_secret_value())
         except ValueError as exc:
             raise ValueError(
-                "must be one or more comma-separated Fernet keys (run `python scripts/init_env.py` to generate one)"
+                "must be one or more comma-separated Fernet keys (run `python3 scripts/init_env.py` to generate one)"
             ) from exc
         return value
 
@@ -69,5 +69,5 @@ def get_settings() -> Settings:
         )
         raise SystemExit(
             f"IdentityHub configuration is invalid:\n{problems}\n"
-            "Copy .env.example to .env (or run `python scripts/init_env.py`) and fill in the missing values."
+            "Copy .env.example to .env (or run `python3 scripts/init_env.py`) and fill in the missing values."
         ) from None
