@@ -1,0 +1,7 @@
+.venv
+.env
+.digest-state.json
+**/__pycache__
+.pytest_cache
+build
+*.egg-info

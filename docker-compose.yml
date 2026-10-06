@@ -10,5 +10,21 @@ services:
       - identityhub-data:/data
     restart: unless-stopped
 
+  # Bonus: NHI Blog Digest. Opt-in: `docker compose --profile digest up -d`.
+  # Checks the Oasis blog daily and files new posts through IdentityHub's REST API.
+  digest:
+    build: ./digest
+    profiles: ["digest"]
+    env_file: .env
+    environment:
+      IDENTITYHUB_URL: http://app:8000
+    volumes:
+      - digest-data:/data
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   identityhub-data:
+  digest-data:

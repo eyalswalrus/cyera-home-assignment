@@ -63,6 +63,7 @@ npm install && npm run dev
 # Tests
 cd server && uv run pytest
 cd web && npm test
+cd digest && uv run pytest
 
 # After changing the API: regenerate the frontend's TypeScript types from FastAPI's schema
 cd web && npm run gen:api
@@ -85,6 +86,27 @@ curl -X POST http://localhost:8000/api/v1/findings \
 
 Interactive documentation for every endpoint and error is at http://localhost:8000/docs.
 
+## Bonus: NHI Blog Digest
+
+`digest/` summarizes the newest [Oasis Security blog](https://www.oasis.security/blog) post with
+Claude and files it as a Jira ticket through IdentityHub's REST API.
+
+1. In IdentityHub, create an API key (Settings → API keys) allowed to post to the project you want.
+2. In `.env`, set `ANTHROPIC_API_KEY`, `IDENTITYHUB_API_KEY` and `DIGEST_PROJECT_KEY`.
+3. Run it:
+
+```bash
+cd digest && uv run digest --dry-run   # fetch + summarize, print only
+```
+
+```bash
+cd digest && uv run digest             # file the ticket (skips a post already filed)
+```
+
+```bash
+docker compose --profile digest up -d  # or: run with the app and check daily
+```
+
 ## Architecture
 
 ```
@@ -99,6 +121,7 @@ server/   FastAPI backend
   app/db/        SQLAlchemy models and session
   app/schemas/   request/response contracts shared by the UI and REST API
   app/core/      settings, encryption, CSRF, rate limiting, security headers
+digest/   bonus: NHI Blog Digest automation (separate client of the REST API)
 scripts/  helper scripts (env bootstrap)
 ```
 

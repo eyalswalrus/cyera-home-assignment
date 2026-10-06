@@ -16,7 +16,7 @@ part lands.
 | **FastAPI + Pydantic** backend | Request/response validation and OpenAPI docs come for free, which suits a product whose second consumer is a REST API for scanners and CI pipelines. |
 | **React + Vite + TypeScript** frontend | Clear separation: the UI is a static app that only talks to `/api`. |
 | **One origin** - FastAPI serves the built UI | No CORS configuration, and session cookies stay first-party. In development, Vite proxies `/api` to FastAPI so the browser still sees one origin. |
-| **SQLite** | Zero setup for reviewers. All access goes through SQLAlchemy, so moving to Postgres is a connection-string change (plus migrations, see section 10). |
+| **SQLite** | Zero setup for reviewers. All access goes through SQLAlchemy, so moving to Postgres is a connection-string change (plus migrations, see section 11). |
 | **Docker Compose** as the primary run path | `docker compose up` is the lowest-friction way to run both halves. |
 | **Locked dependencies** (`uv.lock`, `package-lock.json`) | The Docker build installs exactly the tested versions (`uv sync --locked`, `npm ci`), so the image is reproducible. |
 
@@ -473,7 +473,44 @@ org) ∩ (creator's Jira permissions)*, so no key can do more than the person wh
 
 ---
 
-## 9. Secrets and configuration
+## 9. Bonus: NHI Blog Digest
+
+An automation in `digest/` that fetches the newest post from oasis.security/blog, summarizes it
+with Claude, and files a Jira ticket with the post's title and the summary.
+
+- **A separate client of the public API.** The digest is its own small project (its own
+  dependencies, lock file and image) and creates the ticket through `POST /api/v1/findings` with an
+  API key scoped to one project, exactly as an external scanner would. It never touches the
+  server's code or database, and running it exercises the REST API and the key permissions end to
+  end.
+- **Finding the newest post.** The blog has no RSS feed. The index pins a featured post at the top,
+  which isn't the newest (at the time of writing it is a July post above a September one), so
+  "first link" would be wrong. The digest takes the first 8 post links from the index, reads each
+  post's schema.org `BlogPosting` JSON-LD, and picks the latest `datePublished`. The post pages show
+  no visible date (the only dates on the page are in its cited sources), so the structured data is
+  the reliable one. `trafilatura` extracts the article text without navigation and footers.
+- **Summary.** Claude Opus 5.5 through the official `anthropic` SDK, at `medium` effort (a summary
+  doesn't need deep reasoning). The output is plain text of about 200 words: a summary, key points,
+  and "why it matters for our NHIs", because the readers are the team that owns non-human
+  identities. Server-side refusal fallback (`fallbacks: "default"`) is enabled, and a refusal,
+  empty answer or truncated answer is treated as an error rather than filed.
+- **The blog is untrusted input.** The article goes inside `<article>` tags, and the system prompt
+  says to treat it as content, never as instructions. The model has no tools, and its output only
+  becomes ticket text, so a prompt injection in a blog post could at worst produce a misleading
+  summary.
+- **Idempotent.** A small state file records the last post filed, so a scheduled run doesn't create
+  duplicates. It is written only after the ticket is created, so a failed run is retried next time.
+  `--force` files the post again; `--dry-run` prints the summary without filing.
+- **Trigger.** Run it once (`uv run digest`), or as the opt-in Compose service
+  (`docker compose --profile digest up -d`), which checks daily and keeps its state in a volume. A
+  scheduler service (cron, Kubernetes CronJob, GitHub Actions) would run the same one-shot command
+  in production; a sleep loop keeps this POC to one command and no extra infrastructure.
+- **Errors say what to do:** missing IdentityHub settings, missing Claude credentials, the blog
+  layout changing, or IdentityHub refusing the key (with its `code`).
+
+---
+
+## 10. Secrets and configuration
 
 - **Fail fast:** the app refuses to start if a required secret is missing or malformed, and the
   message names the setting and how to generate it (`scripts/init_env.py`).
@@ -486,7 +523,7 @@ org) ∩ (creator's Jira permissions)*, so no key can do more than the person wh
 
 ---
 
-## 10. Known limitations and production next steps
+## 11. Known limitations and production next steps
 
 - **SSO and provisioning** with SAML/OIDC and SCIM instead of local passwords (section 3).
 - **Organizations** with membership and Row-Level Security (section 2).
