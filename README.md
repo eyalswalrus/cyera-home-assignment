@@ -63,7 +63,6 @@ npm install && npm run dev
 # Tests
 cd server && uv run pytest
 cd web && npm test
-cd digest && uv run pytest
 
 # After changing the API: regenerate the frontend's TypeScript types from FastAPI's schema
 cd web && npm run gen:api
@@ -88,24 +87,24 @@ Interactive documentation for every endpoint and error is at http://localhost:80
 
 ## Bonus: NHI Blog Digest
 
-`digest/` summarizes the newest [Oasis Security blog](https://www.oasis.security/blog) post with
-Claude and files it as a Jira ticket through IdentityHub's REST API.
+New posts on the [Oasis Security blog](https://www.oasis.security/blog) are summarized and filed
+as Jira tickets in the projects users choose under **Settings → NHI Blog Digest**. To enable it:
 
-1. In IdentityHub, create an API key (Settings → API keys) allowed to post to the project you want.
-2. In `.env`, set `ANTHROPIC_API_KEY`, `IDENTITYHUB_API_KEY` and `DIGEST_PROJECT_KEY`.
-3. Run it:
+1. Create a dedicated Atlassian account for the bot (e.g. "IdentityHub"; Jira's free plan allows
+   10 users), give it *Create Issues* in the projects that may receive the digest, and create an
+   [API token](https://id.atlassian.com/manage-profile/security/api-tokens) for it.
+2. In `.env`, set `DIGEST_JIRA_SITE_URL`, `DIGEST_JIRA_EMAIL` and `DIGEST_JIRA_API_TOKEN`.
+3. Choose who writes the summaries (automatic, first available wins):
+   - **Claude:** set `ANTHROPIC_API_KEY`.
+   - **Free local model:** start Ollama alongside the app (downloads ~2 GB on first run):
 
-```bash
-cd digest && uv run digest --dry-run   # fetch + summarize, print only
-```
+     ```bash
+     docker compose --profile llm up -d --build
+     ```
 
-```bash
-cd digest && uv run digest             # file the ticket (skips a post already filed)
-```
+   - **Nothing:** a built-in extractive summary is used, and tickets say so.
 
-```bash
-docker compose --profile digest up -d  # or: run with the app and check daily
-```
+The digest runs shortly after startup and then daily; **Run now** in Settings runs it on demand.
 
 ## Architecture
 
@@ -118,10 +117,10 @@ server/   FastAPI backend
   app/api/       HTTP layer: request validation → service call → response
   app/services/  business logic (findings, Jira connection, API keys)
   app/jira/      Jira Cloud client wrapper + error translation
+  app/digest/    blog reader and summarizers for the NHI Blog Digest
   app/db/        SQLAlchemy models and session
   app/schemas/   request/response contracts shared by the UI and REST API
   app/core/      settings, encryption, CSRF, rate limiting, security headers
-digest/   bonus: NHI Blog Digest automation (separate client of the REST API)
 scripts/  helper scripts (env bootstrap)
 ```
 

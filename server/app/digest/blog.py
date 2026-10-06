@@ -6,6 +6,7 @@ article text. Posts are compared by `datePublished` because the index pins a fea
 top, which is not necessarily the newest one.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +17,7 @@ import trafilatura
 from bs4 import BeautifulSoup
 
 USER_AGENT = "IdentityHub-NHI-Blog-Digest/0.1"
+CANDIDATES = 8  # posts from the top of the index to compare by publish date
 
 
 class BlogError(Exception):
@@ -30,19 +32,22 @@ class BlogPost:
     text: str
 
 
-def fetch_latest_post(client: httpx.Client, blog_url: str, candidates: int) -> BlogPost:
-    links = _post_links(_get(client, blog_url), blog_url)[:candidates]
-    if not links:
-        raise BlogError(f"No blog post links found on {blog_url}; the page layout may have changed.")
-    posts = [post for url in links if (post := _read_post(client, url)) is not None]
+async def fetch_latest_post(blog_url: str, candidates: int = CANDIDATES) -> BlogPost:
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=20) as client:
+        links = _post_links(await _get(client, blog_url), blog_url)[:candidates]
+        if not links:
+            raise BlogError(f"No blog post links found on {blog_url}; the page layout may have changed.")
+        pages = await asyncio.gather(*(_get(client, url) for url in links))
+    # Parsing and text extraction are CPU work; keep them off the event loop.
+    posts = await asyncio.to_thread(lambda: [p for url, html in zip(links, pages) if (p := _parse_post(url, html))])
     if not posts:
         raise BlogError("None of the blog posts had a readable title and publish date.")
     return max(posts, key=lambda p: p.published)
 
 
-def _get(client: httpx.Client, url: str) -> str:
+async def _get(client: httpx.AsyncClient, url: str) -> str:
     try:
-        response = client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=20)
+        response = await client.get(url)
         response.raise_for_status()
     except httpx.HTTPError as exc:
         raise BlogError(f"Couldn't fetch {url}: {exc}") from exc
@@ -50,7 +55,7 @@ def _get(client: httpx.Client, url: str) -> str:
 
 
 def _post_links(html: str, blog_url: str) -> list[str]:
-    """Absolute post URLs under /blog/, in page order, without duplicates."""
+    """Absolute post URLs directly under /blog/, in page order, without duplicates."""
     base_path = urlparse(blog_url).path.rstrip("/")
     links: dict[str, None] = {}
     for anchor in BeautifulSoup(html, "html.parser").find_all("a", href=True):
@@ -61,8 +66,7 @@ def _post_links(html: str, blog_url: str) -> list[str]:
     return list(links)
 
 
-def _read_post(client: httpx.Client, url: str) -> BlogPost | None:
-    html = _get(client, url)
+def _parse_post(url: str, html: str) -> BlogPost | None:
     meta = _blog_posting(html)
     if meta is None:
         return None

@@ -713,6 +713,165 @@
         }
       }
     },
+    "/api/digest": {
+      "get": {
+        "tags": [
+          "blog digest"
+        ],
+        "summary": "Digest status and your subscriptions",
+        "operationId": "get_status_api_digest_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestStatus"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/digest/projects": {
+      "get": {
+        "tags": [
+          "blog digest"
+        ],
+        "summary": "Projects you and the digest bot can both create issues in",
+        "operationId": "eligible_projects_api_digest_projects_get",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Project"
+                  },
+                  "title": "Response Eligible Projects Api Digest Projects Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/digest/subscriptions": {
+      "put": {
+        "tags": [
+          "blog digest"
+        ],
+        "summary": "Set which projects receive the digest",
+        "operationId": "set_subscriptions_api_digest_subscriptions_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
+    "/api/digest/run": {
+      "post": {
+        "tags": [
+          "blog digest"
+        ],
+        "summary": "Run the digest now (in the background)",
+        "operationId": "run_now_api_digest_run_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Run Now Api Digest Run Post"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/findings": {
       "post": {
         "tags": [
@@ -1180,6 +1339,97 @@
         ],
         "title": "ConnectionOut"
       },
+      "DigestStatus": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason",
+            "description": "Why the user can't manage subscriptions right now"
+          },
+          "bot_account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bot Account"
+          },
+          "site_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Site Url"
+          },
+          "summarizer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summarizer"
+          },
+          "interval_hours": {
+            "type": "number",
+            "title": "Interval Hours"
+          },
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastRunOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subscriptions": {
+            "items": {
+              "$ref": "#/components/schemas/SubscriptionOut"
+            },
+            "type": "array",
+            "title": "Subscriptions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "unavailable_reason",
+          "bot_account",
+          "site_url",
+          "summarizer",
+          "interval_hours",
+          "running",
+          "last_run",
+          "subscriptions"
+        ],
+        "title": "DigestStatus"
+      },
       "ErrorModel": {
         "properties": {
           "detail": {
@@ -1334,14 +1584,103 @@
           "jira_configured": {
             "type": "boolean",
             "title": "Jira Configured"
+          },
+          "digest_configured": {
+            "type": "boolean",
+            "title": "Digest Configured"
           }
         },
         "type": "object",
         "required": [
           "status",
-          "jira_configured"
+          "jira_configured",
+          "digest_configured"
         ],
         "title": "HealthResponse"
+      },
+      "LastRunOut": {
+        "properties": {
+          "finished_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Finished At"
+          },
+          "outcome": {
+            "type": "string",
+            "title": "Outcome"
+          },
+          "post_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Post Title"
+          },
+          "post_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Post Url"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "finished_at",
+          "outcome",
+          "post_title",
+          "post_url",
+          "error"
+        ],
+        "title": "LastRunOut"
+      },
+      "LastTicket": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "post_title": {
+            "type": "string",
+            "title": "Post Title"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "url",
+          "post_title",
+          "created_at"
+        ],
+        "title": "LastTicket"
       },
       "Project": {
         "properties": {
@@ -1448,6 +1787,69 @@
           "url"
         ],
         "title": "SiteOut"
+      },
+      "SubscriptionOut": {
+        "properties": {
+          "project_key": {
+            "type": "string",
+            "title": "Project Key"
+          },
+          "project_name": {
+            "type": "string",
+            "title": "Project Name"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_ticket": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastTicket"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_key",
+          "project_name",
+          "last_error",
+          "last_ticket"
+        ],
+        "title": "SubscriptionOut"
+      },
+      "SubscriptionsIn": {
+        "properties": {
+          "project_keys": {
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,19}$",
+              "examples": [
+                "SEC"
+              ]
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Project Keys"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "project_keys"
+        ],
+        "title": "SubscriptionsIn"
       },
       "UserCreate": {
         "properties": {

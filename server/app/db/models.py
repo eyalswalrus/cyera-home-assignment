@@ -13,7 +13,7 @@ from typing import Any
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
 from fastapi_users_db_sqlalchemy.generics import GUID, TIMESTAMPAware, now_utc
-from sqlalchemy import JSON, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.core.crypto import EncryptedJSON
@@ -123,4 +123,41 @@ class Finding(Base):
     issue_key: Mapped[str] = mapped_column(String(64), nullable=False)
     issue_url: Mapped[str] = mapped_column(String(512), nullable=False)
     summary: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
+
+
+class DigestSubscription(Base):
+    """A user asking for the NHI Blog Digest to be filed in one Jira project.
+
+    Tickets are filed by the digest bot account, not the user, but a subscription only counts
+    while its user can still create issues in the project themselves; otherwise the bot would let
+    users post into projects they can't access.
+    """
+
+    __tablename__ = "digest_subscription"
+    __table_args__ = (UniqueConstraint("user_id", "project_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = _user_fk()
+    project_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    project_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Why the last run couldn't deliver for this subscription (cleared on success).
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
+
+
+class DigestDelivery(Base):
+    """One digest ticket: a blog post filed in a project. Unique per (post, project), so however
+    many users subscribe a project, and however often the job runs, each post is filed there once."""
+
+    __tablename__ = "digest_delivery"
+    __table_args__ = (UniqueConstraint("post_url", "project_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    post_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    post_title: Mapped[str] = mapped_column(String(512), nullable=False)
+    project_key: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    issue_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    issue_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    summarizer: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)

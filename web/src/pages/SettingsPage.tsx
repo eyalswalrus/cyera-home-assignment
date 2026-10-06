@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router'
 import { type JiraConnection, useDisconnectJira, useJiraConnection, useJiraSites, useSelectSite } from '../api/hooks'
 import { JIRA_CONNECT_URL, jiraConnectErrorMessage } from '../api/messages'
 import { ApiKeysSection } from '../components/ApiKeys'
+import { BlogDigestSection } from '../components/BlogDigest'
 import { ErrorState } from '../components/ErrorState'
 import { JiraNotReady } from '../components/JiraStatus'
 
@@ -28,6 +29,23 @@ export function SettingsPage() {
           </div>
           <OAuthResult />
           <JiraConnectionSection />
+        </Stack>
+      </Paper>
+      <Paper withBorder p="lg">
+        <Stack>
+          <div>
+            <Title order={2} size="h4">
+              NHI Blog Digest
+            </Title>
+            <Text size="sm" c="dimmed">
+              Each new post on the{' '}
+              <Anchor href="https://www.oasis.security/blog" target="_blank" rel="noopener noreferrer" inherit>
+                Oasis Security blog
+              </Anchor>{' '}
+              is summarized and filed as a Jira ticket in the projects you choose.
+            </Text>
+          </div>
+          <BlogDigestSection />
         </Stack>
       </Paper>
       <Paper withBorder p="lg">

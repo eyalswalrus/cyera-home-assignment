@@ -31,7 +31,7 @@ def _use_keys(monkeypatch, keys: str) -> None:
 async def test_health(client):
     response = await client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "jira_configured": True}
+    assert response.json() == {"status": "ok", "jira_configured": True, "digest_configured": False}
 
 
 async def test_tokens_are_encrypted_at_rest(db):

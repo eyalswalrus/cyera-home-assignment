@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Finding, FindingSource, User
 from app.jira import adf, client
-from app.jira.client import ActiveConnection
+from app.jira.client import JiraTarget
 from app.jira.errors import JiraForbidden, JiraNotFound, JiraProjectUnsupported, JiraValidationError
 from app.schemas.findings import FindingCreate, FindingCreated, Project, RecentTicket
 from app.services.jira_connection import use_jira
@@ -37,7 +37,7 @@ async def create_finding(
     key = finding.project_key
     async with use_jira(db, user) as conn:
         try:
-            issue_type_id = await _pick_issue_type(conn, key)
+            issue_type_id = await pick_issue_type(conn, key)
             issue = await client.create_issue(
                 conn,
                 {
@@ -53,7 +53,7 @@ async def create_finding(
         except JiraNotFound as exc:
             raise JiraNotFound(f"Project {key} wasn't found, or your Jira account can't access it.") from exc
 
-    created = FindingCreated(key=issue["key"], url=_browse_url(conn, issue["key"]), summary=finding.summary)
+    created = FindingCreated(key=issue["key"], url=browse_url(conn, issue["key"]), summary=finding.summary)
     db.add(
         Finding(
             user_id=user.id,
@@ -88,14 +88,14 @@ async def recent_findings(db: AsyncSession, user: User, project_key: str) -> lis
         RecentTicket(
             key=issue["key"],
             summary=issue["fields"]["summary"],
-            url=_browse_url(conn, issue["key"]),
+            url=browse_url(conn, issue["key"]),
             created_at=_parse_jira_time(issue["fields"]["created"]),
         )
         for issue in issues
     ]
 
 
-async def _pick_issue_type(conn: ActiveConnection, project_key: str) -> str:
+async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:
     types = [t for t in await client.get_issue_types(conn, project_key) if not t.get("subtask")]
     by_name = {t["name"]: t["id"] for t in types}
     for name in PREFERRED_ISSUE_TYPES:
@@ -127,7 +127,7 @@ def _labels(finding: FindingCreate) -> list[str]:
     return labels
 
 
-def _browse_url(conn: ActiveConnection, issue_key: str) -> str:
+def browse_url(conn: JiraTarget, issue_key: str) -> str:
     return f"{conn.site_url.rstrip('/')}/browse/{issue_key}"
 
 

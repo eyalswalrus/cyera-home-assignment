@@ -262,6 +262,74 @@ export interface paths {
         patch: operations["update_key_api_api_keys__key_id__patch"];
         trace?: never;
     };
+    "/api/digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Digest status and your subscriptions */
+        get: operations["get_status_api_digest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/digest/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Projects you and the digest bot can both create issues in */
+        get: operations["eligible_projects_api_digest_projects_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/digest/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set which projects receive the digest */
+        put: operations["set_subscriptions_api_digest_subscriptions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/digest/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the digest now (in the background) */
+        post: operations["run_now_api_digest_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/findings": {
         parameters: {
             query?: never;
@@ -462,6 +530,29 @@ export interface components {
             /** Account Name */
             account_name?: string | null;
         };
+        /** DigestStatus */
+        DigestStatus: {
+            /** Configured */
+            configured: boolean;
+            /**
+             * Unavailable Reason
+             * @description Why the user can't manage subscriptions right now
+             */
+            unavailable_reason: string | null;
+            /** Bot Account */
+            bot_account: string | null;
+            /** Site Url */
+            site_url: string | null;
+            /** Summarizer */
+            summarizer: string | null;
+            /** Interval Hours */
+            interval_hours: number;
+            /** Running */
+            running: boolean;
+            last_run: components["schemas"]["LastRunOut"] | null;
+            /** Subscriptions */
+            subscriptions: components["schemas"]["SubscriptionOut"][];
+        };
         /** ErrorModel */
         ErrorModel: {
             /** Detail */
@@ -525,6 +616,38 @@ export interface components {
             status: string;
             /** Jira Configured */
             jira_configured: boolean;
+            /** Digest Configured */
+            digest_configured: boolean;
+        };
+        /** LastRunOut */
+        LastRunOut: {
+            /**
+             * Finished At
+             * Format: date-time
+             */
+            finished_at: string;
+            /** Outcome */
+            outcome: string;
+            /** Post Title */
+            post_title: string | null;
+            /** Post Url */
+            post_url: string | null;
+            /** Error */
+            error: string | null;
+        };
+        /** LastTicket */
+        LastTicket: {
+            /** Key */
+            key: string;
+            /** Url */
+            url: string;
+            /** Post Title */
+            post_title: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** Project */
         Project: {
@@ -573,6 +696,21 @@ export interface components {
             name: string;
             /** Url */
             url: string;
+        };
+        /** SubscriptionOut */
+        SubscriptionOut: {
+            /** Project Key */
+            project_key: string;
+            /** Project Name */
+            project_name: string;
+            /** Last Error */
+            last_error: string | null;
+            last_ticket: components["schemas"]["LastTicket"] | null;
+        };
+        /** SubscriptionsIn */
+        SubscriptionsIn: {
+            /** Project Keys */
+            project_keys: string[];
         };
         /** UserCreate */
         UserCreate: {
@@ -1154,6 +1292,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_digest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DigestStatus"];
+                };
+            };
+        };
+    };
+    eligible_projects_api_digest_projects_get: {
+        parameters: {
+            query?: {
+                query?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_subscriptions_api_digest_subscriptions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscriptionsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DigestStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_now_api_digest_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };

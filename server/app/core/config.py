@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from cryptography.fernet import Fernet, MultiFernet
 from pydantic import Field, SecretStr, ValidationError, field_validator
@@ -35,6 +36,23 @@ class Settings(BaseSettings):
     atlassian_client_id: str | None = None
     atlassian_client_secret: SecretStr | None = None
 
+    # --- NHI Blog Digest -------------------------------------------------------------------------
+    # The Jira account that files digest tickets (a dedicated "IdentityHub" bot user), authenticated
+    # with an Atlassian API token. The digest is disabled unless all three are set.
+    digest_jira_site_url: str | None = None  # e.g. https://acme.atlassian.net
+    digest_jira_email: str | None = None
+    digest_jira_api_token: SecretStr | None = None
+    digest_blog_url: str = "https://www.oasis.security/blog"
+    digest_interval_hours: float = Field(default=24, gt=0)
+
+    # Who writes the summary. "auto" picks the first available: Claude (if ANTHROPIC_API_KEY is
+    # set), then a local Ollama model (if reachable), then a built-in extractive summary.
+    llm_provider: Literal["auto", "anthropic", "ollama", "extractive"] = "auto"
+    anthropic_api_key: SecretStr | None = None
+    anthropic_model: str = "claude-opus-5-5"
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2:3b"
+
     @field_validator("encryption_keys")
     @classmethod
     def _validate_encryption_keys(cls, value: SecretStr) -> SecretStr:
@@ -57,6 +75,10 @@ class Settings(BaseSettings):
     @property
     def jira_configured(self) -> bool:
         return bool(self.atlassian_client_id and self.atlassian_client_secret)
+
+    @property
+    def digest_configured(self) -> bool:
+        return bool(self.digest_jira_site_url and self.digest_jira_email and self.digest_jira_api_token)
 
 
 def build_fernet(keys: str) -> MultiFernet:

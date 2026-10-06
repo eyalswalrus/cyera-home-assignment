@@ -18,6 +18,10 @@ def text(value: str, *marks: str) -> Node:
     return node
 
 
+def link(label: str, href: str) -> Node:
+    return {"type": "text", "text": label, "marks": [{"type": "link", "attrs": {"href": href}}]}
+
+
 def paragraph(*content: Node) -> Node:
     return {"type": "paragraph", "content": list(content)}
 

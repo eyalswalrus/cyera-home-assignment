@@ -40,6 +40,20 @@ export const handlers = [
     return HttpResponse.json(projects.filter((p) => `${p.name} ${p.key}`.toLowerCase().includes(query)))
   }),
   http.get('*/api/findings/recent', () => HttpResponse.json(tickets)),
+  http.get('*/api/api-keys', () => HttpResponse.json([])),
+  http.get('*/api/digest', () =>
+    HttpResponse.json({
+      configured: false,
+      unavailable_reason: 'not set up',
+      bot_account: null,
+      site_url: null,
+      summarizer: null,
+      interval_hours: 24,
+      running: false,
+      last_run: null,
+      subscriptions: [],
+    }),
+  ),
 ]
 
 export const server = setupServer(...handlers)

@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,15 @@ async def close_db() -> None:
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
+    get_engine()
+    assert _sessionmaker is not None
+    async with _sessionmaker() as session:
+        yield session
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncIterator[AsyncSession]:
+    """A session for work outside a request, e.g. the scheduled blog digest."""
     get_engine()
     assert _sessionmaker is not None
     async with _sessionmaker() as session:

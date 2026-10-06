@@ -1,5 +1,6 @@
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -9,7 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
-from app.api import api_keys, auth, findings, health, jira, v1
+from app.api import api_keys, auth, digest, findings, health, jira, v1
 from app.core.config import get_settings
 from app.core.csrf import JSONCSRFMiddleware
 from app.core.errors import AppError
@@ -17,6 +18,7 @@ from app.core.rate_limit import build_rate_limiter
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.db.session import close_db, init_db
 from app.jira.oauth import build_oauth
+from app.services.digest import DigestRuntime, schedule
 
 
 class SPAStaticFiles(StaticFiles):
@@ -38,7 +40,13 @@ class SPAStaticFiles(StaticFiles):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    settings = get_settings()
+    scheduler = asyncio.create_task(schedule(settings, app.state.digest)) if settings.digest_configured else None
     yield
+    if scheduler:
+        scheduler.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler
     await close_db()
 
 
@@ -47,6 +55,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="IdentityHub", version="0.1.0", lifespan=lifespan)
     app.state.rate_limiter = build_rate_limiter()
     app.state.oauth = build_oauth(settings)
+    app.state.digest = DigestRuntime()
 
     # Middleware added last runs first: security headers wrap everything, including CSRF rejections.
     # Short-lived signed cookie holding OAuth `state` between /jira/connect and /jira/callback.
@@ -71,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(jira.router, prefix="/api")
     app.include_router(findings.router, prefix="/api")
     app.include_router(api_keys.router, prefix="/api")
+    app.include_router(digest.router, prefix="/api")
     app.include_router(v1.router, prefix="/api")
 
     @app.exception_handler(AppError)

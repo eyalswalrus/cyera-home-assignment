@@ -35,6 +35,15 @@ business logic and the glue between them.
 | Security headers | secure |
 | Encryption at rest | cryptography (`MultiFernet`) |
 | Configuration | pydantic-settings |
+| Blog parsing | BeautifulSoup (links, JSON-LD), trafilatura (article text) |
+| Summaries | anthropic (Claude), ollama (local model) |
+| HTTP | httpx2, the maintained fork of httpx (see below) |
+
+**One HTTP stack: httpx2.** The Anthropic SDK (1.x) and Authlib use `httpx2`, the maintained,
+API-compatible fork of `httpx`. `app/__init__.py` calls `httpx2.alias_httpx()` before anything else
+imports `httpx`, so our own code, the `ollama` client and the test mocks (respx) all share it. Two
+stacks side by side would mean, for example, that `except httpx.HTTPError` silently misses an
+error raised inside Authlib.
 
 **slowapi was replaced by `limits`.** slowapi applies limits through a decorator on our own
 route functions, but the login and register routes are defined inside fastapi-users. `limits` is
@@ -216,9 +225,7 @@ status, a stable `code` and a user-facing message. One exception handler turns t
 - **To verify against real Atlassian:** the token request sends client credentials in a form body
   (`client_secret_post`). Atlassian documents a JSON body; the tests mock this exchange, so it is
   confirmed only once real credentials are configured.
-- **HTTP client:** Authlib 1.8 prefers the new `httpx2` package and falls back to `httpx`, which it
-  still supports and which our mocking library (respx) targets. Moving to `httpx2` later is a
-  dependency change.
+- **HTTP client:** the whole app runs on `httpx2` (section 1), which Authlib uses natively.
 
 ---
 
@@ -475,43 +482,80 @@ org) ∩ (creator's Jira permissions)*, so no key can do more than the person wh
 
 ## 9. Bonus: NHI Blog Digest
 
-An automation in `digest/` that fetches the newest post from oasis.security/blog, summarizes it
-with Claude, and files a Jira ticket with the post's title and the summary.
+Each new post on oasis.security/blog is summarized and filed as a Jira ticket, with the post's
+title and the summary, in every project users have subscribed to the digest.
 
-- **External to the UI, as the brief specifies.** The digest adds nothing to the web app: no
-  pages, buttons or status views. It is a headless job (a CLI, or a scheduled container). Its only
-  link to IdentityHub is an API key created with the existing API-keys feature, just like any
-  scanner. The alternative, calling Jira directly, would need its own Jira credentials and would
-  bypass the key's project restrictions.
-- **A separate client of the public API.** The digest is its own small project (its own
-  dependencies, lock file and image) and creates the ticket through `POST /api/v1/findings` with an
-  API key scoped to one project, exactly as an external scanner would. It never touches the
-  server's code or database, and running it exercises the REST API and the key permissions end to
-  end.
-- **Finding the newest post.** The blog has no RSS feed. The index pins a featured post at the top,
-  which isn't the newest (at the time of writing it is a July post above a September one), so
-  "first link" would be wrong. The digest takes the first 8 post links from the index, reads each
-  post's schema.org `BlogPosting` JSON-LD, and picks the latest `datePublished`. The post pages show
-  no visible date (the only dates on the page are in its cited sources), so the structured data is
-  the reliable one. `trafilatura` extracts the article text without navigation and footers.
-- **Summary.** Claude Opus 5.5 through the official `anthropic` SDK, at `medium` effort (a summary
-  doesn't need deep reasoning). The output is plain text of about 200 words: a summary, key points,
-  and "why it matters for our NHIs", because the readers are the team that owns non-human
-  identities. Server-side refusal fallback (`fallbacks: "default"`) is enabled, and a refusal,
-  empty answer or truncated answer is treated as an error rather than filed.
-- **The blog is untrusted input.** The article goes inside `<article>` tags, and the system prompt
-  says to treat it as content, never as instructions. The model has no tools, and its output only
-  becomes ticket text, so a prompt injection in a blog post could at worst produce a misleading
-  summary.
-- **Idempotent.** A small state file records the last post filed, so a scheduled run doesn't create
-  duplicates. It is written only after the ticket is created, so a failed run is retried next time.
-  `--force` files the post again; `--dry-run` prints the summary without filing.
-- **Trigger.** Run it once (`uv run digest`), or as the opt-in Compose service
-  (`docker compose --profile digest up -d`), which checks daily and keeps its state in a volume. A
-  scheduler service (cron, Kubernetes CronJob, GitHub Actions) would run the same one-shot command
-  in production; a sleep loop keeps this POC to one command and no extra infrastructure.
-- **Errors say what to do:** missing IdentityHub settings, missing Claude credentials, the blog
-  layout changing, or IdentityHub refusing the key (with its `code`).
+### Who does what
+
+| | Configured by | Where |
+|---|---|---|
+| The **bot account** that files tickets, and the **summarizer** (Claude key / local model) | The deployer, once | `.env`, like the Atlassian OAuth secrets |
+| **Which projects** receive the digest | Each user, for projects they work in | Settings → NHI Blog Digest |
+
+The automation itself has no UI, as the brief specifies: it is a scheduled job inside the server.
+The Settings section only lets users choose recipient projects and see what happened (last ticket
+per project, errors, last run, and a *Run now* button for demos).
+
+### The bot account
+
+- **Tickets come from IdentityHub, not from a person.** A 3LO OAuth app always acts as the user who
+  authorized it; there is no "app user" to attribute a ticket to (only Forge or Connect apps have
+  one, a different distribution model, section 3). So a dedicated Atlassian account named e.g.
+  "IdentityHub" files the tickets, authenticated with an API token set at deploy time.
+- **The bot can't widen anyone's access.**
+  - The picker only offers projects that **both** the user and the bot can create issues in.
+  - Subscribing is re-validated on the server.
+  - At delivery, at least one subscriber must **still** be able to create issues in the project;
+    otherwise nothing is filed and the subscription shows why.
+- **Permissions are granted in Jira and verified by us.** A Jira admin gives the bot *Create Issues*
+  on the digest projects (ideally nothing else; a classic API token carries all of its account's
+  permissions). IdentityHub can't grant Jira permissions; it checks them:
+  - The bot's sign-in is verified (and re-checked every few minutes).
+  - Its per-project access is checked when subscribing and on every run.
+  - Each failure has its own message: wrong site URL, rejected credentials, Jira unreachable, or
+    "the bot can no longer create issues in OPS. Ask a Jira admin to grant it access."
+- **One site.** The bot works on one Jira site; users connected to a different site are told so.
+- **Production:** Atlassian's dedicated service accounts and scoped API tokens, where available on
+  the plan, would narrow the bot further. The bot uses a seat; Jira's free plan allows 10 users.
+
+### The run
+
+- **Schedule:** a background task in the server, shortly after startup, then every
+  `DIGEST_INTERVAL_HOURS` (24 by default). *Run now* triggers the same function.
+- **Newest post:** the blog has no RSS feed, and its index pins an older featured post at the top.
+  The digest takes the first 8 post links, reads each post's schema.org `BlogPosting` JSON-LD, and
+  picks the latest `datePublished` (the post pages show no visible date of their own).
+  `trafilatura` extracts the article text.
+- **Summarized once** per post, however many projects receive it.
+- **Exactly once per (post, project):** a unique `digest_delivery` row is written with each ticket,
+  so two subscribers of the same project get one ticket, and re-runs file nothing new. A failed
+  project gets no row, so it is retried on the next run.
+- **Tickets** carry the labels `identityhub` and `nhi-blog-digest` (so they also appear in the
+  project's recent tickets list), a link to the post, its publish date, and which summarizer wrote
+  the summary.
+
+### Summaries: Claude, a free local model, or no LLM
+
+Reviewers may not have an Anthropic API key, so the summarizer is chosen per run (`LLM_PROVIDER`,
+default `auto`), with the first available option winning:
+
+1. **Claude** (Opus 5.5 via the official SDK), when `ANTHROPIC_API_KEY` is set. Medium effort,
+   server-side refusal fallback; a refusal, empty or truncated answer is an error, not a ticket.
+2. **A local model via Ollama**, free and offline: `docker compose --profile llm up` starts it and
+   downloads `llama3.2:3b` (about 2 GB) on first start. Used when reachable and the model is
+   present. Measured on this Mac's CPU in Docker: about a minute per summary, which is fine for a
+   daily background job, with summaries that follow the requested format and stay on the facts.
+3. **Extractive**, built in: the most representative sentences of the article (word-frequency
+   scoring). Not an LLM, so it is only the fallback, and tickets say so. Written in ~30 lines
+   rather than pulling in `sumy`, which needs NLTK's tokenizer data downloaded at build or first
+   run, too much for a last resort.
+
+Free hosted tiers (Gemini, Groq, OpenRouter, ...) were considered but still need a sign-up and
+key, and their terms change often.
+
+**The blog is untrusted input.** The article is fenced in `<article>` tags, and the prompt says to
+treat it as content, never as instructions. The model has no tools and its output only becomes
+ticket text, so a prompt injection in a post could at worst produce a misleading summary.
 
 ---
 
@@ -545,6 +589,8 @@ with Claude, and files a Jira ticket with the post's title and the summary.
 - **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
   while submitting; the API could accept an `Idempotency-Key` header.
 - **API-key rate limits are in memory** (single process), like the login limit.
+- **The digest scheduler runs in-process,** with its last-run status in memory. With several
+  replicas, run it in one (a leader lock, or a separate cron job calling the same function).
 - **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
 - **Swagger UI's "Try it out"** can't call cookie-authenticated endpoints, because it doesn't send
   the CSRF header. It is intended for the API-key REST API.

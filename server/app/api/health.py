@@ -9,8 +9,10 @@ router = APIRouter(tags=["meta"])
 class HealthResponse(BaseModel):
     status: str
     jira_configured: bool
+    digest_configured: bool
 
 
 @router.get("/health")
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", jira_configured=get_settings().jira_configured)
+    settings = get_settings()
+    return HealthResponse(status="ok", jira_configured=settings.jira_configured, digest_configured=settings.digest_configured)
