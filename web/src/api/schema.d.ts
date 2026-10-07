@@ -461,12 +461,13 @@ export interface components {
             scopes: components["schemas"]["Scope"][];
             /**
              * Projects
-             * @description Jira projects the key may create tickets in.
+             * @description Jira projects the key may create tickets in, or "all": every project the key's owner can create issues in, now or later.
              * @example [
              *       "SEC"
              *     ]
+             * @example all
              */
-            projects: string[];
+            projects: string[] | "all";
         };
         /**
          * ApiKeyUpdate

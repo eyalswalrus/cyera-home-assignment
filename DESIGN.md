@@ -456,6 +456,7 @@ Each key carries one permissions document, fixed at creation:
 
 ```json
 {"version": 1, "scopes": ["findings:create"], "projects": ["SEC", "PLAT"]}
+{"version": 1, "scopes": ["findings:create"], "projects": "all"}
 ```
 
 - **Granular:** *scopes* say which actions a key may perform; today there is one,
@@ -463,6 +464,13 @@ Each key carries one permissions document, fixed at creation:
   can create issues in every listed project, so a key can never be granted more than its owner
   has. "Board" in the brief maps to the Jira *project*: tickets live in projects, and boards are
   views over them.
+- **All projects** (`"projects": "all"`) is for integrations that report across the whole site,
+  e.g. an org-wide scanner. It means every project the owner can create issues in, including ones
+  they get access to later; Jira still enforces the owner's permissions on every request, so it
+  never exceeds what the owner can do. The UI offers it as the second choice, with specific
+  projects recommended, and lists such keys with an "All projects" badge. It was added after the
+  list form without changing existing keys: a release that predates it refuses such a key
+  (fail closed) instead of misreading it.
 - **Immutable:** the only update endpoint (`PATCH /api/api-keys/{id}`) accepts `notes` and nothing
   else. Sending `permissions`, `expires_in_days` or `name` returns a 422 rather than being
   silently ignored. To change what a key can do, create a new key and revoke the old one. This

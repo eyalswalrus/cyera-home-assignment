@@ -11,6 +11,7 @@ import {
   Fieldset,
   Group,
   Paper,
+  Radio,
   Select,
   SimpleGrid,
   Skeleton,
@@ -49,7 +50,7 @@ const SCOPES: { value: ApiKeyScope; label: string; description: string }[] = [
   {
     value: 'findings:create',
     label: 'Create findings',
-    description: 'POST /api/v1/findings: create NHI finding tickets in the projects below.',
+    description: 'POST /api/v1/findings: create NHI finding tickets in the projects chosen below.',
   },
 ]
 const scopeLabel = (scope: string) => SCOPES.find((s) => s.value === scope)?.label ?? scope
@@ -93,13 +94,19 @@ export function ApiKeysSection({ jiraReady }: { jiraReady: boolean }) {
 
 // --- Creating ---------------------------------------------------------------------------------
 
-const schema = z.object({
-  name: z.string().trim().min(1, 'Name the key after where it will be used.').max(100, 'Keep the name under 100 characters.'),
-  notes: z.string().max(MAX_NOTES, `Keep notes under ${MAX_NOTES} characters.`),
-  scopes: z.array(z.string()).min(1, 'Choose at least one action.'),
-  projects: z.array(z.string()).min(1, 'Choose at least one project.').max(50, 'Choose at most 50 projects.'),
-  expires_in_days: z.enum(LIFETIMES.map(String) as [string, ...string[]]),
-})
+const schema = z
+  .object({
+    name: z.string().trim().min(1, 'Name the key after where it will be used.').max(100, 'Keep the name under 100 characters.'),
+    notes: z.string().max(MAX_NOTES, `Keep notes under ${MAX_NOTES} characters.`),
+    scopes: z.array(z.string()).min(1, 'Choose at least one action.'),
+    projectScope: z.enum(['specific', 'all']),
+    projects: z.array(z.string()).max(50, 'Choose at most 50 projects.'),
+    expires_in_days: z.enum(LIFETIMES.map(String) as [string, ...string[]]),
+  })
+  .refine((v) => v.projectScope === 'all' || v.projects.length > 0, {
+    path: ['projects'],
+    message: 'Choose at least one project.',
+  })
 type Values = z.infer<typeof schema>
 
 function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (key: ApiKeyCreated) => void }) {
@@ -110,11 +117,13 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
       name: '',
       notes: '',
       scopes: ['findings:create'],
+      projectScope: 'specific',
       projects: [],
       expires_in_days: String(DEFAULT_LIFETIME),
     },
   })
   const lifetime = Number(useWatch({ control: form.control, name: 'expires_in_days' }))
+  const projectScope = useWatch({ control: form.control, name: 'projectScope' })
   const [openedAt] = useState(Date.now) // "expires on" preview, relative to when the form opened
   const expiresOn = new Date(openedAt + lifetime * 86_400_000).toLocaleDateString(undefined, { dateStyle: 'medium' })
 
@@ -124,7 +133,10 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
         name: values.name,
         notes: values.notes.trim() || null,
         expires_in_days: Number(values.expires_in_days) as ApiKeyCreate['expires_in_days'],
-        permissions: { scopes: values.scopes as ApiKeyScope[], projects: values.projects },
+        permissions: {
+          scopes: values.scopes as ApiKeyScope[],
+          projects: values.projectScope === 'all' ? 'all' : values.projects,
+        },
       },
       {
         onSuccess: onCreated,
@@ -194,18 +206,36 @@ function CreateKeyForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
               />
               <Controller
                 control={form.control}
-                name="projects"
-                render={({ field, fieldState }) => (
-                  <ProjectMultiSelect
-                    label="Projects"
-                    description="The key can only create tickets in these projects."
-                    required
-                    value={field.value}
-                    onChange={field.onChange}
-                    error={fieldState.error?.message}
-                  />
+                name="projectScope"
+                render={({ field }) => (
+                  <Radio.Group label="Projects" withAsterisk {...field}>
+                    <Stack gap="xs" mt="xs">
+                      <Radio value="specific" label="Specific projects" description="Recommended: only what this integration needs." />
+                      <Radio
+                        value="all"
+                        label="All projects"
+                        description="Every project you can create issues in, including ones you get access to later."
+                      />
+                    </Stack>
+                  </Radio.Group>
                 )}
               />
+              {projectScope === 'specific' && (
+                <Controller
+                  control={form.control}
+                  name="projects"
+                  render={({ field, fieldState }) => (
+                    <ProjectMultiSelect
+                      label="Allowed projects"
+                      description="The key can only create tickets in these projects."
+                      required
+                      value={field.value}
+                      onChange={field.onChange}
+                      error={fieldState.error?.message}
+                    />
+                  )}
+                />
+              )}
               <Controller
                 control={form.control}
                 name="expires_in_days"
@@ -245,7 +275,7 @@ function NewKeyReveal({ created, onDone }: { created: ApiKeyCreated; onDone: () 
     `curl -X POST ${window.location.origin}/api/v1/findings \\`,
     `  -H "Authorization: Bearer ${created.key}" \\`,
     `  -H "Content-Type: application/json" \\`,
-    `  -d '{"project_key": "${created.permissions.projects[0]}", "summary": "Stale Service Account: svc-deploy-prod"}'`,
+    `  -d '{"project_key": "${created.permissions.projects === 'all' ? 'SEC' : created.permissions.projects[0]}", "summary": "Stale Service Account: svc-deploy-prod"}'`,
   ].join('\n')
 
   return (
@@ -358,11 +388,17 @@ function KeyCard({ apiKey }: { apiKey: ApiKey }) {
               <Text size="xs" c="dimmed">
                 in
               </Text>
-              {apiKey.permissions.projects.map((k) => (
-                <Badge key={k} variant="outline" size="sm">
-                  {k}
+              {apiKey.permissions.projects === 'all' ? (
+                <Badge variant="outline" size="sm" color="orange">
+                  All projects
                 </Badge>
-              ))}
+              ) : (
+                apiKey.permissions.projects.map((k) => (
+                  <Badge key={k} variant="outline" size="sm">
+                    {k}
+                  </Badge>
+                ))
+              )}
             </Group>
           </Detail>
           <Detail label="Validity">

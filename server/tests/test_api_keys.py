@@ -315,3 +315,39 @@ async def test_full_schema_is_only_served_in_development(client, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as dev:
         assert (await dev.get("/docs")).status_code == 200
         assert "/api/findings" in (await dev.get("/openapi.json")).json()["paths"]
+
+
+# --- "All projects" keys ----------------------------------------------------------------------
+
+
+async def all_projects_key(client, atlassian) -> str:
+    calls_before = len(atlassian.jira.calls)
+    body = {"name": "Org-wide scanner", "expires_in_days": 30, "permissions": {"scopes": ["findings:create"], "projects": "all"}}
+    response = await client.post("/api/api-keys", json=body, headers=await csrf(client))
+    assert response.status_code == 201
+    assert response.json()["permissions"]["projects"] == "all"
+    # No per-project check: there is no list to check.
+    assert not any("/project/search" in c.request.url for c in atlassian.jira.calls[calls_before:])
+    return response.json()["key"]
+
+
+async def test_all_projects_key_can_post_to_any_project(connected, atlassian, anonymous):
+    key = await all_projects_key(connected, atlassian)
+    atlassian.jira.get(f"{JIRA_API}/issue/createmeta/OPS/issuetypes", json={"issueTypes": [{"id": "3", "name": "Task"}]})
+    response = await post_finding(anonymous, key, {**FINDING, "project_key": "OPS"})
+    assert response.status_code == 201
+
+
+async def test_all_projects_key_is_still_bound_by_the_owners_jira_permissions(connected, atlassian, anonymous):
+    key = await all_projects_key(connected, atlassian)
+    atlassian.jira.get(f"{JIRA_API}/issue/createmeta/HR/issuetypes", json={"errorMessages": ["No access"]}, status=403)
+    response = await post_finding(anonymous, key, {**FINDING, "project_key": "HR"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Your Jira account doesn't have permission to create issues in HR."
+
+
+@pytest.mark.parametrize("projects", ["ALL", "*", "", []])
+async def test_only_a_list_or_all_is_accepted(connected, projects):
+    body = {"name": "x", "permissions": {"scopes": ["findings:create"], "projects": projects}}
+    response = await connected.post("/api/api-keys", json=body, headers=await csrf(connected))
+    assert response.status_code == 422

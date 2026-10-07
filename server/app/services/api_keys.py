@@ -20,6 +20,7 @@ from app.core.errors import AppError
 from app.db.models import ApiKey, User
 from app.jira import client
 from app.schemas.api_keys import (
+    ALL_PROJECTS,
     MAX_PROJECTS_PER_KEY,
     ApiKeyCreate,
     ApiKeyCreated,
@@ -113,10 +114,12 @@ async def create_key(db: AsyncSession, user: User, data: ApiKeyCreate) -> ApiKey
         raise ApiKeyLimitReached()
 
     # A key can only be scoped to projects its owner can create issues in *today*. Jira still
-    # enforces permissions on every request, so later permission changes are respected too.
+    # enforces permissions on every request, so later permission changes are respected too. An
+    # "all projects" key needs a working Jira connection but no per-project check.
     async with use_jira(db, user) as conn:
-        permitted = await client.search_projects(conn, None, MAX_PROJECTS_PER_KEY, keys=data.permissions.projects)
-    not_permitted = [k for k in data.permissions.projects if k not in {p["key"] for p in permitted}]
+        chosen = [] if data.permissions.all_projects else list(data.permissions.projects)
+        permitted = await client.search_projects(conn, None, MAX_PROJECTS_PER_KEY, keys=chosen) if chosen else []
+    not_permitted = [k for k in chosen if k not in {p["key"] for p in permitted}]
     if not_permitted:
         raise ApiKeyProjectsNotPermitted(
             f"Your Jira account can't create issues in {', '.join(not_permitted)}, so an API key can't be "
@@ -201,7 +204,7 @@ def require_scope(auth: AuthenticatedKey, scope: Scope) -> None:
 
 def ensure_project_allowed(auth: AuthenticatedKey, project_key: str) -> None:
     projects = auth.permissions.projects
-    if project_key not in projects:
+    if projects != ALL_PROJECTS and project_key not in projects:
         raise ApiKeyProjectForbidden(
             f"This API key isn't allowed to create tickets in {project_key}. It is limited to: {', '.join(projects)}."
         )

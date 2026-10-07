@@ -31,7 +31,7 @@ async function openCreateForm(user: User) {
 }
 
 async function chooseProject(user: User, name: string) {
-  const [input] = screen.getAllByRole('combobox', { name: /Projects/ })
+  const [input] = screen.getAllByRole('combobox', { name: /Allowed projects/ })
   await user.click(input)
   await user.click(await screen.findByRole('option', { name }))
 }
@@ -100,6 +100,33 @@ describe('API keys', () => {
 
     await user.click(screen.getByRole('button', { name: "I've saved it" }))
     expect(screen.queryByText(/ihub_SECRET-value-123/)).not.toBeInTheDocument()
+  })
+
+  it('creates a key for all projects', async () => {
+    let sent: unknown
+    server.use(
+      http.post('*/api/api-keys', async ({ request }) => {
+        sent = await request.json()
+        return HttpResponse.json(
+          {
+            ...existingKey,
+            id: '3',
+            name: 'Nightly scanner',
+            permissions: { version: 1, scopes: ['findings:create'], projects: 'all' },
+            key: 'ihub_ALL-value-456',
+          },
+          { status: 201 },
+        )
+      }),
+    )
+    const { user } = renderApp('/settings')
+    await openCreateForm(user)
+    await user.click(screen.getByRole('radio', { name: /All projects/ }))
+    expect(screen.queryByRole('combobox', { name: /Allowed projects/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create key' }))
+
+    expect(await screen.findByText(/it won't be shown again/)).toBeInTheDocument()
+    expect(sent).toMatchObject({ permissions: { scopes: ['findings:create'], projects: 'all' } })
   })
 
   it('requires at least one project', async () => {

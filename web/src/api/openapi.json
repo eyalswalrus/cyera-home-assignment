@@ -1187,22 +1187,31 @@
             "description": "Actions the key may perform."
           },
           "projects": {
-            "items": {
-              "type": "string",
-              "pattern": "^[A-Z][A-Z0-9_]{1,19}$",
-              "examples": [
-                "SEC"
-              ]
-            },
-            "type": "array",
-            "maxItems": 50,
-            "minItems": 1,
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]{1,19}$",
+                  "examples": [
+                    "SEC"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 50,
+                "minItems": 1
+              },
+              {
+                "type": "string",
+                "const": "all"
+              }
+            ],
             "title": "Projects",
-            "description": "Jira projects the key may create tickets in.",
+            "description": "Jira projects the key may create tickets in, or \"all\": every project the key's owner can create issues in, now or later.",
             "examples": [
               [
                 "SEC"
-              ]
+              ],
+              "all"
             ]
           }
         },
