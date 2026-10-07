@@ -1,15 +1,14 @@
-"""NHI Blog Digest: status, project subscriptions, and a manual "run now"."""
+"""NHI Blog Digest: status, project subscriptions, and "send the latest post" per project."""
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request, status
+from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.users import current_active_user
-from app.core.config import Settings, get_settings
+from app.core.config import get_settings
 from app.core.rate_limit import RateLimit
 from app.db.models import User
 from app.db.session import get_db
@@ -104,10 +103,6 @@ class SubscriptionsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     project_keys: Annotated[list[ProjectKey], Field(max_length=digest.MAX_SUBSCRIPTIONS)]
-    send_latest_now: bool = Field(
-        default=False,
-        description="For projects added in this request: also file the current latest post, and run now.",
-    )
 
     @field_validator("project_keys", mode="before")
     @classmethod
@@ -124,10 +119,7 @@ async def set_subscriptions(
     db: AsyncSession = Depends(get_db),
     runtime: DigestRuntime = Depends(_runtime),
 ) -> DigestStatus:
-    settings = get_settings()
-    if await digest.set_subscriptions(db, user, settings, runtime, body.project_keys, body.send_latest_now):
-        # A run in progress has already read the subscriptions, so ask it for one more pass.
-        _start_run(settings, runtime, rerun_if_running=True)
+    await digest.set_subscriptions(db, user, get_settings(), runtime, body.project_keys)
     return await get_status(user, db, runtime)
 
 
@@ -155,29 +147,3 @@ async def send_latest(
         filed=sent.filed,
         ticket=LastTicket(key=d.issue_key, url=d.issue_url, post_title=d.post.title, created_at=d.created_at),
     )
-
-
-def _start_run(settings: Settings, runtime: DigestRuntime, *, rerun_if_running: bool = False) -> bool:
-    """Start a background run unless one is already going (then optionally ask it to run once
-    more when it finishes). Returns whether a new run was started."""
-    if runtime.running:
-        runtime.rerun_requested = runtime.rerun_requested or rerun_if_running
-        return False
-    runtime.task = asyncio.create_task(digest.run_digest(settings, runtime))
-    return True
-
-
-@router.post(
-    "/run",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Run the digest now (in the background)",
-    dependencies=[Depends(RateLimit("digest_run", "3/minute"))],
-)
-async def run_now(user: User = Depends(current_active_user), runtime: DigestRuntime = Depends(_runtime)) -> dict:
-    settings = get_settings()
-    if not settings.jira_configured:
-        raise digest.DigestUnavailable("The Jira integration isn't configured on this server.")
-    # Already-filed posts are skipped per project, so running again never duplicates tickets.
-    if not _start_run(settings, runtime):
-        raise digest.DigestAlreadyRunning()
-    return {"status": "started"}

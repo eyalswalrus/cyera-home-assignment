@@ -389,7 +389,7 @@ react-hook-form + zod for forms, React Router.
   covered too, which prevents login-CSRF. `/api/v1/*` is exempt because it authenticates with an
   API key header, not cookies.
 - **Rate limiting:** 10 requests per minute per client IP across login, logout and register;
-  60 per minute per API key and 120 per IP on `/api/v1`; 3 per minute on the digest's run endpoint and 5 per minute on *Send latest post*.
+  60 per minute per API key and 120 per IP on `/api/v1`; 5 per minute on the digest's *Send latest post*.
   All answered with `429` and `Retry-After`.
 - **Security headers:** strict Content-Security-Policy (`script-src 'self'`, no framing),
   `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and `Permissions-Policy`; HSTS only when
@@ -545,7 +545,8 @@ not in the UI.
 - **When:** daily at a fixed time, `DIGEST_DAILY_AT` (09:00 UTC by default), so restarts don't
   shift the schedule. A catch-up run also happens shortly after the server starts, in case it was
   down at the scheduled time; it is cheap because filed posts and stored summaries are reused.
-  `POST /api/digest/run` triggers the same function.
+  There is no endpoint to run it for everyone on demand: that would let any user trigger work for
+  all subscribers. Users get *Send latest post* for their own projects instead.
 - **Which posts:** the blog has no RSS feed, and its index pins an older featured post at the top.
   The digest takes the first 8 post links and reads each post's schema.org `BlogPosting` JSON-LD
   for its `datePublished` (the post pages show no visible date of their own); `trafilatura`
@@ -557,8 +558,7 @@ not in the UI.
   - **Send latest post** (a button per subscribed project) files the newest post in that project
     right away, together with any earlier posts still due there, so none is skipped; if it is
     already there, it says so. It shares the run's lock, so it can't race the scheduled run into
-    filing a post twice. (The API also accepts `send_latest_now` when subscribing, which does the
-    same through a background run.)
+    filing a post twice.
 
   Each run files the posts published after the watermark that aren't in the project yet, **oldest
   first**, so a day with two new posts files both. At most 5 per project per run, so a long outage
@@ -572,7 +572,7 @@ not in the UI.
   mid-run can't create duplicates. There is no per-user record because tickets go to projects, not
   people; the "last ticket" a user sees is the project's latest delivery.
 - **Tickets** carry the labels `identityhub` and `nhi-blog-digest` (so they also appear in the
-  project's recent tickets list), a link to the post, its publish date, and which summarizer wrote
+  project's recent tickets list, alongside findings), a link to the post, its publish date, and which summarizer wrote
   the summary.
 
 ### Summaries: Claude, a free local model, or no LLM

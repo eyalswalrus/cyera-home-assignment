@@ -227,33 +227,6 @@ async def test_fresh_start_only_files_posts_published_after_subscribing(app, cli
     assert filed_titles(jira) == ["NHI Blog Digest: Brand new post"]
 
 
-async def subscribe_sending_latest(client, keys):
-    return await client.put(
-        "/api/digest/subscriptions", json={"project_keys": keys, "send_latest_now": True}, headers=await csrf(client)
-    )
-
-
-async def test_send_latest_now_files_just_the_latest_post_right_away(app, client, jira):
-    await connected_user(client)
-    assert (await subscribe_sending_latest(client, ["SEC"])).status_code == 200
-    await app.state.digest.task  # saving started a run
-
-    # The current latest post, not the older backlog.
-    assert filed_titles(jira) == ["NHI Blog Digest: When a Worm Steals Your Keys"]
-    assert app.state.digest.last_run.outcome == "filed 1 ticket in SEC"
-
-
-async def test_send_latest_now_only_applies_to_newly_added_projects(app, client, jira):
-    await connected_user(client)
-    await subscribe(client, ["SEC"])  # fresh start, no backlog
-    assert app.state.digest.task is None  # no run without the option
-
-    await subscribe_sending_latest(client, ["SEC", "OPS"])
-    await app.state.digest.task
-    [request] = issue_requests(jira)
-    assert json.loads(request.body)["fields"]["project"] == {"key": "OPS"}
-
-
 async def test_catch_up_files_only_posts_newer_than_the_last_digest(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
@@ -363,16 +336,6 @@ async def test_blog_unreachable_fails_cleanly(app, client, jira):
     assert result.outcome == "failed" and "Couldn't fetch" in result.error
 
 
-async def test_run_now_endpoint(app, client, jira, db):
-    await connected_user(client)
-    await subscribe(client, ["SEC"])
-    await backdate_subscriptions(db, 30)
-    response = await client.post("/api/digest/run", headers=await csrf(client))
-    assert response.status_code == 202
-    await app.state.digest.task
-    assert (await client.get("/api/digest")).json()["last_run"]["outcome"] == "filed 2 tickets in SEC"
-
-
 # --- Send the latest post now -----------------------------------------------------------------
 
 
@@ -395,6 +358,26 @@ async def test_send_latest_files_the_newest_post_once(app, client, jira):
     assert again["filed"] == 0 and again["ticket"]["key"] == "SEC-42"
     assert len(issue_requests(jira)) == 1  # nothing filed twice
     assert (await run(app)).outcome.startswith("up to date")  # and the scheduled run agrees
+
+
+async def test_digest_tickets_are_found_by_the_recent_tickets_search(app, client, jira):
+    """Recent tickets are a JQL search on the `identityhub` label, which digest tickets carry."""
+    from urllib.parse import parse_qs, urlparse
+
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await send_latest(client)
+    [request] = issue_requests(jira)
+    assert "identityhub" in json.loads(request.body)["fields"]["labels"]
+
+    jira.jira.get(
+        f"{JIRA_API}/search/jql",
+        json={"issues": [{"key": "SEC-42", "fields": {"summary": "NHI Blog Digest: When a Worm Steals Your Keys", "created": "2026-10-07T09:00:00.000+0000"}}]},
+    )
+    recent = (await client.get("/api/findings/recent", params={"project_key": "SEC"})).json()
+    assert [t["summary"] for t in recent] == ["NHI Blog Digest: When a Worm Steals Your Keys"]
+    search = next(c.request for c in jira.jira.calls if "/search/jql" in c.request.url)
+    assert 'labels = "identityhub"' in (parse_qs(urlparse(search.url).query).get("jql", [""])[0] + (search.body or ""))
 
 
 async def test_send_latest_also_files_earlier_posts_still_due(app, client, jira, db):
@@ -426,33 +409,6 @@ async def test_send_latest_reports_an_unreadable_blog(app, client, jira):
     jira.oauth.get(BLOG).respond(503)
     response = await send_latest(client)
     assert response.status_code == 502 and response.json()["code"] == "digest_blog_unavailable"
-
-
-async def test_subscribing_during_a_run_triggers_another_pass(app, monkeypatch):
-    """A run in progress has already read the subscriptions; "send the latest post now" must not
-    wait until tomorrow."""
-    import asyncio
-
-    from app.api.digest import _start_run
-    from app.core.config import get_settings
-    from app.services import digest
-    from app.services.digest import LastRun
-
-    release, passes = asyncio.Event(), []
-
-    async def slow_run(settings, runtime):
-        passes.append(1)
-        await release.wait()
-        return LastRun(datetime.now(UTC), "ok")
-
-    monkeypatch.setattr(digest, "_run", slow_run)
-    runtime = app.state.digest
-    assert _start_run(get_settings(), runtime)
-    await asyncio.sleep(0)
-    assert not _start_run(get_settings(), runtime, rerun_if_running=True)
-    release.set()
-    await runtime.task
-    assert len(passes) == 2 and not runtime.running
 
 
 @pytest.mark.parametrize(

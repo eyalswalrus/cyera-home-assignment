@@ -101,8 +101,6 @@ class DigestRuntime:
     last_run: LastRun | None = None
     next_run_at: datetime | None = None  # the scheduler's planned time, jitter included
     # Set when subscriptions change during a run (which has already read them): run once more.
-    rerun_requested: bool = False
-    task: asyncio.Task | None = None
 
     @property
     def running(self) -> bool:
@@ -135,9 +133,8 @@ async def set_subscriptions(
     settings: Settings,
     runtime: DigestRuntime,
     project_keys: list[str],
-    send_latest_now: bool = False,
-) -> bool:
-    """Replace the user's subscriptions. Returns True if new projects asked for the latest post now."""
+) -> None:
+    """Replace the user's subscriptions."""
     if len(project_keys) > MAX_SUBSCRIPTIONS:
         raise DigestProjectsNotEligible(f"You can subscribe at most {MAX_SUBSCRIPTIONS} projects.")
     mine: dict[str, str] = {}
@@ -161,11 +158,10 @@ async def set_subscriptions(
     for key in added:
         db.add(
             DigestSubscription(
-                user_id=user.id, site_url=site, project_key=key, project_name=mine[key], include_latest=send_latest_now
+                user_id=user.id, site_url=site, project_key=key, project_name=mine[key]
             )
         )
     await db.commit()
-    return bool(added) and send_latest_now
 
 
 async def list_subscriptions(db: AsyncSession, user: User) -> list[tuple[DigestSubscription, DigestDelivery | None]]:
@@ -221,7 +217,7 @@ async def send_latest(
                 .order_by(DigestSubscription.created_at)
             )
         ).all()
-        watermark = await _watermark(db, target, list(all_subs), posts)
+        watermark = await _watermark(db, target, list(all_subs))
         filed_urls = set(await db.scalars(select(DigestPost.url).join(DigestDelivery).where(*_is_target(target))))
         due = [p for p in posts if (p.published > watermark or p is newest) and p.url not in filed_urls]
         due = due[-MAX_POSTS_PER_PROJECT_PER_RUN:]  # keeps the newest
@@ -258,19 +254,16 @@ async def run_digest(settings: Settings, runtime: DigestRuntime) -> LastRun:
     if runtime.running:
         raise DigestAlreadyRunning()
     async with runtime.lock:
-        while True:
-            runtime.rerun_requested = False
-            try:
-                run = await _run(settings, runtime)
-            except BlogError as exc:
-                run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=str(exc))
-            except Exception as exc:  # keep the scheduler alive, and say what happened
-                log.exception("Blog digest run failed")
-                run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=f"Unexpected error: {exc}")
-            runtime.last_run = run
-            log.info("Blog digest: %s%s", run.outcome, f" ({run.error})" if run.error else "")
-            if not runtime.rerun_requested:
-                return run
+        try:
+            run = await _run(settings, runtime)
+        except BlogError as exc:
+            run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=str(exc))
+        except Exception as exc:  # keep the scheduler alive, and say what happened
+            log.exception("Blog digest run failed")
+            run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=f"Unexpected error: {exc}")
+        runtime.last_run = run
+        log.info("Blog digest: %s%s", run.outcome, f" ({run.error})" if run.error else "")
+        return run
 
 
 async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
@@ -293,7 +286,7 @@ async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
         # Which posts each project is due: newer than its watermark and not filed there yet.
         plan: dict[Target, list[BlogPost]] = {}
         for target, subs in subs_by_target.items():
-            watermark = await _watermark(db, target, subs, posts)
+            watermark = await _watermark(db, target, subs)
             filed_urls = set(await db.scalars(select(DigestPost.url).join(DigestDelivery).where(*_is_target(target))))
             due = [p for p in posts if p.published > watermark and p.url not in filed_urls]
             if due:
@@ -375,24 +368,12 @@ def _is_target(target: Target) -> tuple:
     return (DigestDelivery.site_url == site_url, DigestDelivery.project_key == project_key)
 
 
-async def _watermark(
-    db: AsyncSession, target: Target, subs: list[DigestSubscription], posts: list[BlogPost]
-) -> datetime:
+async def _watermark(db: AsyncSession, target: Target, subs: list[DigestSubscription]) -> datetime:
     """Posts published after this are due in the project: the newest post already filed there, or
     (fresh start) when the project's current subscriptions began, whichever is later."""
-    subscribed_since = min(_starts_from(s, posts) for s in subs)
+    subscribed_since = min(s.created_at for s in subs)
     last_filed = await db.scalar(select(func.max(DigestPost.published_at)).join(DigestDelivery).where(*_is_target(target)))
     return max(subscribed_since, last_filed) if last_filed else subscribed_since
-
-
-def _starts_from(sub: DigestSubscription, posts: list[BlogPost]) -> datetime:
-    """Fresh start: posts published after subscribing. With "send the latest post now", also the
-    newest post that existed at that moment."""
-    if sub.include_latest:
-        earlier = [p.published for p in posts if p.published <= sub.created_at]
-        if earlier:
-            return max(earlier) - timedelta(microseconds=1)
-    return sub.created_at
 
 
 async def _summaries(

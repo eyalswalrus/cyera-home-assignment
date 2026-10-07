@@ -32,7 +32,7 @@ export function RecentTickets({ project }: { project: Project | null }) {
 
       {!project ? (
         <Text size="sm" c="dimmed">
-          Choose a project to see its recent tickets.
+          Choose a project in the <strong>Jira project</strong> field to see its recent tickets.
         </Text>
       ) : recent.isPending ? (
         <Stack gap="xs">

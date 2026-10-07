@@ -834,34 +834,6 @@
         }
       }
     },
-    "/api/digest/run": {
-      "post": {
-        "tags": [
-          "blog digest"
-        ],
-        "summary": "Run the digest now (in the background)",
-        "operationId": "run_now_api_digest_run_post",
-        "responses": {
-          "202": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Run Now Api Digest Run Post"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ]
-      }
-    },
     "/api/v1/findings": {
       "post": {
         "tags": [
@@ -1857,12 +1829,6 @@
             "type": "array",
             "maxItems": 20,
             "title": "Project Keys"
-          },
-          "send_latest_now": {
-            "type": "boolean",
-            "title": "Send Latest Now",
-            "description": "For projects added in this request: also file the current latest post, and run now.",
-            "default": false
           }
         },
         "additionalProperties": false,

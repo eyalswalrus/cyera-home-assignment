@@ -317,23 +317,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/digest/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Run the digest now (in the background) */
-        post: operations["run_now_api_digest_run_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/findings": {
         parameters: {
             query?: never;
@@ -741,12 +724,6 @@ export interface components {
         SubscriptionsIn: {
             /** Project Keys */
             project_keys: string[];
-            /**
-             * Send Latest Now
-             * @description For projects added in this request: also file the current latest post, and run now.
-             * @default false
-             */
-            send_latest_now?: boolean;
         };
         /** UserCreate */
         UserCreate: {
@@ -1412,28 +1389,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    run_now_api_digest_run_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
         };
