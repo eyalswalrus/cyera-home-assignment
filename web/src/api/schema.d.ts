@@ -549,6 +549,20 @@ export interface components {
             /** Subscriptions */
             subscriptions: components["schemas"]["SubscriptionOut"][];
         };
+        /** ErrorBody */
+        ErrorBody: {
+            /**
+             * Detail
+             * @example This API key isn't allowed to create tickets in OPS. It is limited to: SEC.
+             */
+            detail: string;
+            /**
+             * Code
+             * @description Stable, machine-readable error code
+             * @example api_key_project_forbidden
+             */
+            code: string;
+        };
         /** ErrorModel */
         ErrorModel: {
             /** Detail */
@@ -1420,30 +1434,38 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
             /** @description The key lacks the permission or project, or its owner lacks Jira permission */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
             /** @description Project not found in Jira, or not visible to the key owner */
             404: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
             /** @description The key owner's Jira connection needs attention (not connected / reconnect) */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
-            /** @description Invalid input, or Jira rejected the ticket */
+            /** @description Invalid input (each field listed under `detail`), or Jira rejected the ticket */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1455,14 +1477,18 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
             /** @description Jira is unavailable */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
             };
         };
     };

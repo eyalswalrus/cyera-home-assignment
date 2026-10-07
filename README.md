@@ -80,7 +80,7 @@ and the exact dependency versions from `server/uv.lock`. From the repository roo
 
 ```bash
 # Backend on http://localhost:8000
-(cd server && uv sync && uv run uvicorn app.main:app --reload)
+(cd server && uv sync && ENVIRONMENT=development uv run uvicorn app.main:app --reload)
 
 # Frontend on http://localhost:5173 (proxies /api to the backend). Set
 # UI_BASE_URL=http://localhost:5173 in .env so the Jira OAuth callback returns you to it.
@@ -111,7 +111,8 @@ curl -X POST http://localhost:8000/api/v1/findings \
 
 The API reference (authentication, errors, rate limits, and *Try it out*) is at
 http://localhost:8000/api/v1/docs, also linked from **Settings → API keys**. The full schema,
-including the internal endpoints the web UI uses, is at http://localhost:8000/docs.
+including the internal endpoints the web UI uses, is served at http://localhost:8000/docs only
+with `ENVIRONMENT=development` (as in the local development command above).
 
 ## Bonus: NHI Blog Digest
 

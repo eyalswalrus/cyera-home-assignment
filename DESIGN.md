@@ -395,8 +395,8 @@ react-hook-form + zod for forms, React Router.
   All answered with `429` and `Retry-After`.
 - **Security headers:** strict Content-Security-Policy (`script-src 'self'`, no framing),
   `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and `Permissions-Policy`; HSTS only when
-  served over https. The docs pages (`/docs`, `/api/v1/docs`) get a relaxed policy so Swagger UI
-  can load from its CDN.
+  served over https. The docs pages (`/api/v1/docs`, and `/docs` in development) get a relaxed
+  policy so Swagger UI can load from its CDN.
 
 ---
 
@@ -418,7 +418,8 @@ validated contract and one service.
   permissions, the error format and rate limits, the bearer scheme and every error status.
   Swagger's *Authorize* and *Try it out* work, because this API doesn't use cookies or CSRF. The
   internal endpoints the web UI uses aren't part of that contract, so they're only in the full
-  schema at `/docs`; production would serve that one only in development.
+  schema at `/docs`, which is only served with `ENVIRONMENT=development` (the default is
+  `production`).
 
 | Status | When | `code` |
 |---|---|---|
@@ -766,6 +767,5 @@ everyone. The limit is shared, so one customer's burst becomes every customer's 
   A re-summarize command would update `digest_post.summary` in place. (Deleting the row is not the
   way: it cascades to the post's deliveries, so the post would be filed again.)
 - **Jira refresh lock is per process;** multiple workers need a distributed lock (section 4).
-- **The full schema at `/docs` is public** and its "Try it out" can't call the cookie-authenticated
-  endpoints (no CSRF header). Integrators use `/api/v1/docs`; production would disable `/docs`
-  outside development.
+- **The full schema at `/docs`** (development only) can't "Try it out" the cookie-authenticated
+  endpoints, because Swagger doesn't send the CSRF header.

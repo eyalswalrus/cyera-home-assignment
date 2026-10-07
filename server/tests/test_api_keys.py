@@ -301,3 +301,17 @@ async def test_public_api_reference_lists_only_the_public_api(client):
     assert "ErrorBody" in schema["components"]["schemas"]
     page = await client.get("/api/v1/docs")
     assert page.status_code == 200 and "/api/v1/openapi.json" in page.text
+
+
+async def test_full_schema_is_only_served_in_development(client, monkeypatch):
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert (await client.get(path)).status_code == 404, path
+
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    get_settings.cache_clear()
+    async with AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as dev:
+        assert (await dev.get("/docs")).status_code == 200
+        assert "/api/findings" in (await dev.get("/openapi.json")).json()["paths"]

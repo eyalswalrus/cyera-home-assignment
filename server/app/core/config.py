@@ -16,6 +16,10 @@ _REPO_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=_REPO_ROOT_ENV, env_file_encoding="utf-8", extra="ignore")
 
+    # "development" also serves the full API schema (/docs, /redoc, /openapi.json), including the
+    # internal endpoints the web UI uses. Off by default: integrators use /api/v1/docs.
+    environment: Literal["development", "production"] = "production"
+
     # Public URL the browser uses to reach the app. Drives OAuth redirect URIs and cookie flags.
     app_base_url: str = "http://localhost:8000"
     # Where the browser UI lives, if different (Vite dev server: http://localhost:5173).
@@ -71,6 +75,10 @@ class Settings(BaseSettings):
     @property
     def cookie_secure(self) -> bool:
         return self.app_base_url.startswith("https://")
+
+    @property
+    def is_development(self) -> bool:
+        return self.environment == "development"
 
     @property
     def ui_url(self) -> str:

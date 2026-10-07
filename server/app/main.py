@@ -32,7 +32,7 @@ class SPAStaticFiles(StaticFiles):
         except StarletteHTTPException as exc:
             # Only page routes fall back. Unknown API paths and missing assets must stay 404s,
             # otherwise API clients would receive HTML with a 200.
-            is_page_route = not path.startswith("api/") and "." not in path.rsplit("/", 1)[-1]
+            is_page_route = not path.startswith(("api/", "docs", "redoc")) and "." not in path.rsplit("/", 1)[-1]
             if exc.status_code != 404 or not is_page_route:
                 raise
             return await super().get_response("index.html", scope)
@@ -55,7 +55,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="IdentityHub", version="0.1.0", lifespan=lifespan)
+    # The full schema documents internal endpoints too, so it is only served in development; the
+    # public API has its own reference at /api/v1/docs (app/api/public_docs.py).
+    dev = settings.is_development
+    app = FastAPI(
+        title="IdentityHub",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs" if dev else None,
+        redoc_url="/redoc" if dev else None,
+        openapi_url="/openapi.json" if dev else None,
+    )
     app.state.rate_limiter = build_rate_limiter()
     app.state.oauth = build_oauth(settings)
     app.state.digest = DigestRuntime()

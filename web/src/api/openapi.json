@@ -864,25 +864,67 @@
             }
           },
           "401": {
-            "description": "Missing, invalid, revoked or expired API key"
+            "description": "Missing, invalid, revoked or expired API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "403": {
-            "description": "The key lacks the permission or project, or its owner lacks Jira permission"
+            "description": "The key lacks the permission or project, or its owner lacks Jira permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "404": {
-            "description": "Project not found in Jira, or not visible to the key owner"
+            "description": "Project not found in Jira, or not visible to the key owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "409": {
-            "description": "The key owner's Jira connection needs attention (not connected / reconnect)"
+            "description": "The key owner's Jira connection needs attention (not connected / reconnect)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "422": {
-            "description": "Invalid input, or Jira rejected the ticket"
+            "description": "Invalid input (each field listed under `detail`), or Jira rejected the ticket"
           },
           "429": {
-            "description": "Rate limit exceeded; see the Retry-After header"
+            "description": "Rate limit exceeded; see the Retry-After header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           },
           "502": {
-            "description": "Jira is unavailable"
+            "description": "Jira is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1388,6 +1430,31 @@
           "subscriptions"
         ],
         "title": "DigestStatus"
+      },
+      "ErrorBody": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "examples": [
+              "This API key isn't allowed to create tickets in OPS. It is limited to: SEC."
+            ]
+          },
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Stable, machine-readable error code",
+            "examples": [
+              "api_key_project_forbidden"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "code"
+        ],
+        "title": "ErrorBody"
       },
       "ErrorModel": {
         "properties": {
