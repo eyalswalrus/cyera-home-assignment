@@ -224,6 +224,11 @@ status, a stable `code` and a user-facing message. One exception handler turns t
 ### Scope of this POC
 
 - **One Jira site per user.**
+- **Classic scopes.** `write:jira-work` also permits editing and deleting issues, comments and
+  attachments, which IdentityHub never does. Atlassian's granular scopes (e.g. `write:issue:jira`,
+  `read:project:jira`, `read:issue-details:jira`) would match our calls more closely; switching is a
+  production step to verify against a real site, since some endpoints need several granular
+  scopes. Why each classic scope is needed is in the README.
 - **The refresh lock is per process.** Several workers or replicas would need a distributed lock
   (e.g. a Postgres advisory lock or Redis).
 - **To verify against real Atlassian:** the token request sends client credentials in a form body

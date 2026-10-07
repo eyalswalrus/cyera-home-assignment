@@ -39,6 +39,20 @@ By default an Atlassian OAuth app can only be authorized by its owner. To connec
 Atlassian account (for example to check that two users see different projects), set
 **Distribution** → **Sharing** in the console.
 
+#### Why each scope
+
+| Scope | Jira calls | Used for |
+|---|---|---|
+| `read:jira-work` | `GET /project/search?action=create`, `GET /issue/createmeta/{project}/issuetypes`, `GET /search/jql` | The project picker (only projects you can create issues in), choosing the issue type, and the 10 recent tickets list |
+| `write:jira-work` | `POST /issue` | Creating finding tickets, the only write IdentityHub makes |
+| `read:jira-user` | `GET /myself` | Showing which Atlassian account is connected ("Connected to *acme* as *Alice*") |
+| `offline_access` | none; it makes Atlassian issue a refresh token | Access tokens last about an hour. The REST API and the digest act on your behalf when you aren't in the browser, so the token must be renewable without you. |
+
+Jira also checks your own permissions on every call, so these scopes never let IdentityHub do
+more than you can. Nothing edits, comments on, deletes or assigns issues, so those scopes aren't
+requested. These are Atlassian's *classic* scopes; the narrower *granular* scopes are a production
+refinement (see [DESIGN.md](DESIGN.md) §4).
+
 ### 2. Configure
 
 ```bash
