@@ -54,26 +54,17 @@ describe('NHI Blog Digest settings', () => {
     expect(await screen.findByText('Not available on this server')).toBeInTheDocument()
   })
 
-  it('shows who files tickets, the summarizer, and each project’s last ticket or problem', async () => {
+  it('shows each project’s latest ticket or problem, and none of the server details', async () => {
     server.use(http.get('*/api/digest', () => HttpResponse.json(ready)))
     renderApp('/settings')
 
-    expect(await screen.findByText(/bot account, not by you/)).toHaveTextContent(
-      'Tickets are filed on acme.atlassian.net by the IdentityHub bot account, not by you. Summaries: local model llama3.2:3b (Ollama). Runs daily at 09:00 UTC',
-    )
-    const sec = screen.getByLabelText('Digest for SEC')
+    const sec = await screen.findByLabelText('Digest for SEC')
     expect(within(sec).getByRole('link', { name: /SEC-42/ })).toHaveAttribute('target', '_blank')
     const ops = screen.getByLabelText('Digest for OPS')
     expect(within(ops).getByText(/bot can no longer create issues in OPS/)).toBeInTheDocument()
-    expect(screen.getByText(/Last run .*: filed in SEC/)).toBeInTheDocument()
-  })
-
-  it('explains that tickets are filed with your own connection when no bot is configured', async () => {
-    server.use(http.get('*/api/digest', () => HttpResponse.json({ ...ready, filed_by: 'subscriber', bot_account: null, site_url: null })))
-    renderApp('/settings')
-    expect(await screen.findByText(/No digest bot account is configured/)).toHaveTextContent(
-      "tickets are filed with a subscriber's own Jira connection",
-    )
+    // How the server runs the digest is for administrators, not subscribers.
+    expect(screen.queryByText(/llama3\.2|09:00 UTC|bot account|Last run/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
   })
 
   it('saves the chosen projects', async () => {
@@ -91,27 +82,7 @@ describe('NHI Blog Digest settings', () => {
     await user.click(input)
     await user.click(await screen.findByRole('option', { name: 'Security (SEC)' }))
     await user.click(screen.getByRole('button', { name: 'Save projects' }))
-    await waitFor(() => expect(sent).toEqual({ project_keys: ['SEC'], send_latest_now: false }))
-  })
-
-  it('can send the latest post to newly added projects right away', async () => {
-    let sent: unknown
-    server.use(
-      http.get('*/api/digest', () => HttpResponse.json({ ...ready, subscriptions: [] })),
-      http.get('*/api/digest/projects', () => HttpResponse.json([{ id: '1', key: 'SEC', name: 'Security' }])),
-      http.put('*/api/digest/subscriptions', async ({ request }) => {
-        sent = await request.json()
-        return HttpResponse.json({ ...ready, running: true })
-      }),
-    )
-    const { user } = renderApp('/settings')
-    expect(screen.queryByRole('checkbox', { name: /Also send the latest/ })).not.toBeInTheDocument()
-    const [input] = await screen.findAllByRole('combobox', { name: /Projects that receive the digest/ })
-    await user.click(input)
-    await user.click(await screen.findByRole('option', { name: 'Security (SEC)' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Also send the latest blog post to SEC now' }))
-    await user.click(screen.getByRole('button', { name: 'Save projects' }))
-    await waitFor(() => expect(sent).toEqual({ project_keys: ['SEC'], send_latest_now: true }))
+    await waitFor(() => expect(sent).toEqual({ project_keys: ['SEC'] }))
   })
 
   it('explains why subscriptions are locked', async () => {
@@ -125,14 +96,30 @@ describe('NHI Blog Digest settings', () => {
     expect(screen.queryByRole('combobox', { name: /Projects that receive the digest/ })).not.toBeInTheDocument()
   })
 
-  it('runs the digest on demand', async () => {
-    let ran = false
+  it('sends the latest post to a project on demand', async () => {
+    let sentTo: string | undefined
     server.use(
       http.get('*/api/digest', () => HttpResponse.json(ready)),
-      http.post('*/api/digest/run', () => ((ran = true), HttpResponse.json({ status: 'started' }, { status: 202 }))),
+      http.post('*/api/digest/subscriptions/:key/send-latest', ({ params }) => {
+        sentTo = params.key as string
+        return HttpResponse.json({ filed: 1, ticket: { ...ready.subscriptions[0].last_ticket, key: 'SEC-43' } })
+      }),
     )
     const { user } = renderApp('/settings')
-    await user.click(await screen.findByRole('button', { name: 'Run now' }))
-    await waitFor(() => expect(ran).toBe(true))
+    await user.click(await screen.findByRole('button', { name: 'Send the latest post to SEC' }))
+    expect(await screen.findByText('SEC-43 created in Security')).toBeInTheDocument()
+    expect(sentTo).toBe('SEC')
+  })
+
+  it('says so when the latest post is already in the project', async () => {
+    server.use(
+      http.get('*/api/digest', () => HttpResponse.json(ready)),
+      http.post('*/api/digest/subscriptions/:key/send-latest', () =>
+        HttpResponse.json({ filed: 0, ticket: ready.subscriptions[0].last_ticket }),
+      ),
+    )
+    const { user } = renderApp('/settings')
+    await user.click(await screen.findByRole('button', { name: 'Send the latest post to SEC' }))
+    expect(await screen.findByText('The latest post is already in Security')).toBeInTheDocument()
   })
 })

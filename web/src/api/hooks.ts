@@ -216,20 +216,21 @@ export function useDigest() {
 export function useSetDigestSubscriptions() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ projectKeys, sendLatestNow }: { projectKeys: string[]; sendLatestNow: boolean }) =>
-      call(
-        api.PUT('/api/digest/subscriptions', {
-          body: { project_keys: projectKeys, send_latest_now: sendLatestNow },
-        }),
-      ),
+    mutationFn: (projectKeys: string[]) =>
+      call(api.PUT('/api/digest/subscriptions', { body: { project_keys: projectKeys } })),
     onSuccess: (status) => queryClient.setQueryData(keys.digest, status),
   })
 }
 
-export function useRunDigest() {
+/** File the blog's latest post in a subscribed project now (and any earlier posts still due). */
+export function useSendLatestDigest() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => call(api.POST('/api/digest/run')),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.digest }),
+    mutationFn: (projectKey: string) =>
+      call(
+        api.POST('/api/digest/subscriptions/{project_key}/send-latest', { params: { path: { project_key: projectKey } } }),
+      ),
+    // The project's "last ticket" (and any error) changed either way.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: keys.digest }),
   })
 }

@@ -1,18 +1,21 @@
-import { Alert, Anchor, Badge, Button, Checkbox, Group, Paper, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
-import { IconAlertTriangle, IconExternalLink, IconPlayerPlay, IconRobot, IconUser } from '@tabler/icons-react'
+import { Alert, Anchor, Badge, Button, Group, Paper, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { IconAlertTriangle, IconExternalLink, IconSend } from '@tabler/icons-react'
 import { useState } from 'react'
 import {
   type DigestStatus,
   type DigestSubscription,
   useDigest,
-  useRunDigest,
+  useSendLatestDigest,
   useSetDigestSubscriptions,
 } from '../api/hooks'
 import { formatDateTime, timeAgo } from '../lib/time'
 import { ErrorState } from './ErrorState'
 import { ProjectMultiSelect } from './ProjectMultiSelect'
 
-/** The NHI Blog Digest part of Settings: which projects receive it, and how it's doing. */
+/** The NHI Blog Digest part of Settings: which projects receive it, and their latest tickets.
+ * How the server runs it (bot account, summarizer, schedule) is an administrator's concern and
+ * stays in the API and the README. */
 export function BlogDigestSection() {
   const digest = useDigest()
   if (digest.isPending) return <Skeleton h={120} />
@@ -28,7 +31,6 @@ export function BlogDigestSection() {
   }
   return (
     <Stack>
-      <About status={status} />
       {status.unavailable_reason && (
         <Alert color="yellow" icon={<IconAlertTriangle />} title="You can't change subscriptions right now">
           {status.unavailable_reason}
@@ -38,93 +40,40 @@ export function BlogDigestSection() {
         key={status.subscriptions.map((s) => s.project_key).join(',')} // reset when saved state changes
         status={status}
       />
-      {status.subscriptions.length > 0 && <SubscriptionList subscriptions={status.subscriptions} />}
-      <LastRun status={status} />
+      {status.subscriptions.length > 0 && (
+        <SubscriptionList subscriptions={status.subscriptions} canSend={!status.unavailable_reason} />
+      )}
     </Stack>
-  )
-}
-
-function About({ status }: { status: DigestStatus }) {
-  const schedule = (
-    <>
-      Summaries: {status.summarizer ?? 'unknown'}. Runs daily at {status.daily_at_utc} UTC
-      {status.jitter_minutes > 0 && <>, starting within {status.jitter_minutes} minutes</>}
-      {status.next_run_at && <> (next: {formatDateTime(status.next_run_at)})</>}.
-    </>
-  )
-  if (status.filed_by === 'subscriber') {
-    return (
-      <Group gap="xs" wrap="nowrap" align="flex-start">
-        <IconUser size={18} style={{ flexShrink: 0, marginTop: 2 }} />
-        <Text size="sm">
-          No digest bot account is configured, so tickets are filed with a subscriber's own Jira connection: yours, for
-          projects you're the first to subscribe. An administrator can add a bot account so they're filed as
-          IdentityHub instead. {schedule}
-        </Text>
-      </Group>
-    )
-  }
-  const site = status.site_url ? new URL(status.site_url).host : 'Jira'
-  return (
-    <Group gap="xs" wrap="nowrap" align="flex-start">
-      <IconRobot size={18} style={{ flexShrink: 0, marginTop: 2 }} />
-      <Text size="sm">
-        Tickets are filed on {site} by{' '}
-        {status.bot_account ? (
-          <>
-            the <strong>{status.bot_account}</strong> bot account
-          </>
-        ) : (
-          'the digest bot account'
-        )}
-        , not by you. {schedule}
-      </Text>
-    </Group>
   )
 }
 
 function SubscriptionEditor({ status }: { status: DigestStatus }) {
   const saved = status.subscriptions.map((s) => s.project_key)
   const [projects, setProjects] = useState<string[]>(saved)
-  const [sendLatestNow, setSendLatestNow] = useState(false)
   const save = useSetDigestSubscriptions()
-  const added = projects.filter((k) => !saved.includes(k))
-  const changed = added.length > 0 || projects.length !== saved.length
-  const disabled = Boolean(status.unavailable_reason)
+  const changed = projects.length !== saved.length || projects.some((k) => !saved.includes(k))
 
+  if (status.unavailable_reason) {
+    return (
+      <Text size="sm" c="dimmed">
+        Subscribed projects: {saved.length ? saved.join(', ') : 'none'}
+      </Text>
+    )
+  }
   return (
     <Stack gap="xs">
-      {disabled ? (
-        <Text size="sm" c="dimmed">
-          Subscribed projects: {saved.length ? saved.join(', ') : 'none'}
-        </Text>
-      ) : (
-        <ProjectMultiSelect
-          label="Projects that receive the digest"
-          description={`Only projects ${status.filed_by === 'bot' ? 'both you and the bot' : 'you'} can create issues in are listed. A new subscription receives posts published after you subscribe.`}
-          source="digest"
-          maxValues={20}
-          value={projects}
-          onChange={setProjects}
-          knownProjects={status.subscriptions.map((s) => ({ key: s.project_key, name: s.project_name }))}
-          error={save.error?.message}
-        />
-      )}
-      {added.length > 0 && !disabled && (
-        <Checkbox
-          label={`Also send the latest blog post to ${added.join(', ')} now`}
-          description="Otherwise new subscriptions start with the next post the blog publishes."
-          checked={sendLatestNow}
-          onChange={(event) => setSendLatestNow(event.currentTarget.checked)}
-        />
-      )}
-      {changed && !disabled && (
+      <ProjectMultiSelect
+        label="Projects that receive the digest"
+        source="digest"
+        maxValues={20}
+        value={projects}
+        onChange={setProjects}
+        knownProjects={status.subscriptions.map((s) => ({ key: s.project_key, name: s.project_name }))}
+        error={save.error?.message}
+      />
+      {changed && (
         <Group gap="xs">
-          <Button
-            size="xs"
-            loading={save.isPending}
-            onClick={() => save.mutate({ projectKeys: projects, sendLatestNow: sendLatestNow && added.length > 0 })}
-          >
+          <Button size="xs" loading={save.isPending} onClick={() => save.mutate(projects)}>
             Save projects
           </Button>
           <Button size="xs" variant="default" onClick={() => setProjects(saved)}>
@@ -136,26 +85,29 @@ function SubscriptionEditor({ status }: { status: DigestStatus }) {
   )
 }
 
-function SubscriptionList({ subscriptions }: { subscriptions: DigestSubscription[] }) {
+function SubscriptionList({ subscriptions, canSend }: { subscriptions: DigestSubscription[]; canSend: boolean }) {
   return (
     <Stack gap={6} component="ul" p={0} m={0} style={{ listStyle: 'none' }}>
       {subscriptions.map((sub) => (
         <Paper component="li" key={sub.project_key} withBorder p="xs" aria-label={`Digest for ${sub.project_key}`}>
           <Group justify="space-between" wrap="nowrap" gap="xs">
-            <Text size="sm" fw={500}>
-              {sub.project_name} <Badge variant="outline" size="xs">{sub.project_key}</Badge>
-            </Text>
-            {sub.last_ticket ? (
-              <Tooltip label={`${sub.last_ticket.post_title} · ${formatDateTime(sub.last_ticket.created_at)}`}>
-                <Anchor href={sub.last_ticket.url} target="_blank" rel="noopener noreferrer" size="sm">
-                  {sub.last_ticket.key}, {timeAgo(sub.last_ticket.created_at)} <IconExternalLink size={12} />
-                </Anchor>
-              </Tooltip>
-            ) : (
-              <Text size="sm" c="dimmed">
-                No digest filed yet
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              <Text size="sm" fw={500} truncate>
+                {sub.project_name} <Badge variant="outline" size="xs">{sub.project_key}</Badge>
               </Text>
-            )}
+              {sub.last_ticket ? (
+                <Tooltip label={`${sub.last_ticket.post_title} · ${formatDateTime(sub.last_ticket.created_at)}`}>
+                  <Anchor href={sub.last_ticket.url} target="_blank" rel="noopener noreferrer" size="xs">
+                    Latest: {sub.last_ticket.key}, {timeAgo(sub.last_ticket.created_at)} <IconExternalLink size={11} />
+                  </Anchor>
+                </Tooltip>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  No digest filed yet
+                </Text>
+              )}
+            </Stack>
+            {canSend && <SendLatestButton subscription={sub} />}
           </Group>
           {sub.last_error && (
             <Text size="xs" c="red" mt={4}>
@@ -168,55 +120,40 @@ function SubscriptionList({ subscriptions }: { subscriptions: DigestSubscription
   )
 }
 
-function LastRun({ status }: { status: DigestStatus }) {
-  const run = useRunDigest()
-  const last = status.last_run
+function SendLatestButton({ subscription }: { subscription: DigestSubscription }) {
+  const send = useSendLatestDigest()
+  const { project_key: key, project_name: name } = subscription
+
+  const onClick = () =>
+    send.mutate(key, {
+      onSuccess: ({ filed, ticket }) =>
+        notifications.show({
+          color: filed ? 'green' : 'blue',
+          title: filed ? `${ticket.key} created in ${name}` : `The latest post is already in ${name}`,
+          message: (
+            <Anchor href={ticket.url} target="_blank" rel="noopener noreferrer" size="sm">
+              {ticket.key}: {ticket.post_title} <IconExternalLink size={12} />
+            </Anchor>
+          ),
+          autoClose: 8000,
+        }),
+      onError: (error) =>
+        notifications.show({ color: 'red', title: `Couldn't send the digest to ${name}`, message: error.message }),
+    })
+
   return (
-    <Group justify="space-between" align="flex-start" wrap="nowrap">
-      <Text size="sm" c="dimmed">
-        {status.running ? (
-          'Running now…'
-        ) : last ? (
-          <>
-            Last run {timeAgo(last.finished_at)}: {last.outcome}
-            {last.post_title && last.post_url && (
-              <>
-                {' '}
-                (
-                <Anchor href={last.post_url} target="_blank" rel="noopener noreferrer" inherit>
-                  {last.post_title}
-                </Anchor>
-                )
-              </>
-            )}
-            {last.error && (
-              <Text span c="red" inherit display="block">
-                {last.error}
-              </Text>
-            )}
-          </>
-        ) : (
-          'No run since the server started.'
-        )}
-      </Text>
-      <Tooltip label="Already-filed posts are skipped, so this never creates duplicates">
-        <Button
-          size="xs"
-          variant="light"
-          leftSection={<IconPlayerPlay size={14} />}
-          loading={status.running || run.isPending}
-          disabled={status.subscriptions.length === 0}
-          onClick={() => run.mutate()}
-          style={{ flexShrink: 0 }}
-        >
-          Run now
-        </Button>
-      </Tooltip>
-      {run.error && (
-        <Text size="xs" c="red">
-          {run.error.message}
-        </Text>
-      )}
-    </Group>
+    <Tooltip label="File the blog's latest post in this project now">
+      <Button
+        size="xs"
+        variant="light"
+        leftSection={<IconSend size={14} />}
+        loading={send.isPending}
+        onClick={onClick}
+        style={{ flexShrink: 0 }}
+        aria-label={`Send the latest post to ${key}`}
+      >
+        Send latest post
+      </Button>
+    </Tooltip>
   )
 }

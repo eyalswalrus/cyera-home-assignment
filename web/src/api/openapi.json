@@ -844,6 +844,55 @@
         ]
       }
     },
+    "/api/digest/subscriptions/{project_key}/send-latest": {
+      "post": {
+        "tags": [
+          "blog digest"
+        ],
+        "summary": "File the latest blog post in a subscribed project now",
+        "description": "Also files any earlier posts the project hasn't received yet, so none is skipped. Does\nnothing (and says so) if the latest post is already there.",
+        "operationId": "send_latest_api_digest_subscriptions__project_key__send_latest_post",
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]{1,19}$",
+              "title": "Project Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentLatestOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/digest/run": {
       "post": {
         "tags": [
@@ -1799,6 +1848,25 @@
           "cloud_id"
         ],
         "title": "SelectSiteIn"
+      },
+      "SentLatestOut": {
+        "properties": {
+          "filed": {
+            "type": "integer",
+            "title": "Filed",
+            "description": "Tickets created now; 0 if the latest post was already filed in the project"
+          },
+          "ticket": {
+            "$ref": "#/components/schemas/LastTicket",
+            "description": "The project's ticket for the latest post"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filed",
+          "ticket"
+        ],
+        "title": "SentLatestOut"
       },
       "Severity": {
         "type": "string",

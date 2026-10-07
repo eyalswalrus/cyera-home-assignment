@@ -76,6 +76,21 @@ class DigestAlreadyRunning(AppError):
     message = "The digest is already running. Check back in a minute."
 
 
+class DigestNotSubscribed(AppError):
+    status_code = 404
+    code = "digest_not_subscribed"
+
+
+class DigestBlogUnavailable(AppError):
+    status_code = 502
+    code = "digest_blog_unavailable"
+
+
+class DigestFilingFailed(AppError):
+    status_code = 502
+    code = "digest_filing_failed"
+
+
 # --- Runtime state (one per process) ----------------------------------------------------------
 
 
@@ -249,6 +264,67 @@ async def list_subscriptions(db: AsyncSession, user: User) -> list[tuple[DigestS
         )
         result.append((sub, latest))
     return result
+
+
+@dataclass
+class SentLatest:
+    filed: int  # tickets created by this request (0: the latest post was already there)
+    latest: DigestDelivery  # the project's ticket for the newest post
+
+
+async def send_latest(
+    db: AsyncSession, user: User, settings: Settings, runtime: DigestRuntime, project_key: str
+) -> SentLatest:
+    """File the blog's newest post in one of the user's subscribed projects now, along with any
+    earlier posts still due there (so none is skipped). Shares the run lock, so it can't race the
+    scheduled run into filing a post twice."""
+    sub = await db.scalar(
+        select(DigestSubscription).where(DigestSubscription.user_id == user.id, DigestSubscription.project_key == project_key)
+    )
+    if sub is None:
+        raise DigestNotSubscribed(f"You aren't subscribed to the digest in {project_key}.")
+    if reason := await unavailable_reason(db, user, settings, runtime):
+        raise DigestUnavailable(reason)
+    if runtime.running:
+        raise DigestAlreadyRunning("The digest is running right now. Try again in a minute.")
+    async with runtime.lock:
+        try:
+            posts = await fetch_recent_posts(settings.digest_blog_url)  # oldest first
+        except BlogError as exc:
+            raise DigestBlogUnavailable(f"Couldn't read the Oasis Security blog: {exc}") from exc
+        newest = posts[-1]
+        target: Target = (sub.site_url, project_key)
+        all_subs = (
+            await db.scalars(
+                select(DigestSubscription)
+                .where(DigestSubscription.site_url == sub.site_url, DigestSubscription.project_key == project_key)
+                .order_by(DigestSubscription.created_at)
+            )
+        ).all()
+        watermark = await _watermark(db, target, list(all_subs), posts)
+        filed_urls = set(await db.scalars(select(DigestPost.url).join(DigestDelivery).where(*_is_target(target))))
+        due = [p for p in posts if (p.published > watermark or p is newest) and p.url not in filed_urls]
+        due = due[-MAX_POSTS_PER_PROJECT_PER_RUN:]  # keeps the newest
+
+        filed: list[str] = []
+        if due:
+            if not await _entitled_subscribers(db, target, [sub]):
+                await db.commit()
+                raise DigestFilingFailed(sub.last_error or f"The digest can't be filed in {project_key}.")
+            stored, summary_errors = await _summaries(db, settings, due)
+            error = await _deliver(db, bot_connection(settings), target, due, stored, summary_errors, sub, filed)
+            sub.last_error = error
+            await db.commit()
+            if error:
+                raise DigestFilingFailed(error)
+
+        latest = await db.scalar(
+            select(DigestDelivery)
+            .join(DigestPost)
+            .where(*_is_target(target), DigestPost.url == newest.url)
+        )
+        assert latest is not None
+        return SentLatest(filed=len(filed), latest=latest)
 
 
 # --- The run ---------------------------------------------------------------------------------

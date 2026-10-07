@@ -4,7 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.core.rate_limit import RateLimit
 from app.db.models import User
 from app.db.session import get_db
 from app.digest.summarizers import SummaryError, choose_summarizer
-from app.schemas.findings import Project, ProjectKey
+from app.schemas.findings import PROJECT_KEY_PATTERN, Project, ProjectKey
 from app.services import digest
 from app.services.digest import DigestRuntime
 
@@ -147,6 +147,32 @@ async def set_subscriptions(
         # A run in progress has already read the subscriptions, so ask it for one more pass.
         _start_run(settings, runtime, rerun_if_running=True)
     return await get_status(user, db, runtime)
+
+
+class SentLatestOut(BaseModel):
+    filed: int = Field(description="Tickets created now; 0 if the latest post was already filed in the project")
+    ticket: LastTicket = Field(description="The project's ticket for the latest post")
+
+
+@router.post(
+    "/subscriptions/{project_key}/send-latest",
+    summary="File the latest blog post in a subscribed project now",
+    dependencies=[Depends(RateLimit("digest_send_latest", "5/minute"))],
+)
+async def send_latest(
+    project_key: Annotated[str, Path(pattern=PROJECT_KEY_PATTERN)],
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+    runtime: DigestRuntime = Depends(_runtime),
+) -> SentLatestOut:
+    """Also files any earlier posts the project hasn't received yet, so none is skipped. Does
+    nothing (and says so) if the latest post is already there."""
+    sent = await digest.send_latest(db, user, get_settings(), runtime, project_key)
+    d = sent.latest
+    return SentLatestOut(
+        filed=sent.filed,
+        ticket=LastTicket(key=d.issue_key, url=d.issue_url, post_title=d.post.title, created_at=d.created_at),
+    )
 
 
 def _start_run(settings: Settings, runtime: DigestRuntime, *, rerun_if_running: bool = False) -> bool:

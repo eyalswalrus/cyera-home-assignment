@@ -313,6 +313,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/digest/subscriptions/{project_key}/send-latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * File the latest blog post in a subscribed project now
+         * @description Also files any earlier posts the project hasn't received yet, so none is skipped. Does
+         *     nothing (and says so) if the latest post is already there.
+         */
+        post: operations["send_latest_api_digest_subscriptions__project_key__send_latest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/digest/run": {
         parameters: {
             query?: never;
@@ -710,6 +731,16 @@ export interface components {
         SelectSiteIn: {
             /** Cloud Id */
             cloud_id: string;
+        };
+        /** SentLatestOut */
+        SentLatestOut: {
+            /**
+             * Filed
+             * @description Tickets created now; 0 if the latest post was already filed in the project
+             */
+            filed: number;
+            /** @description The project's ticket for the latest post */
+            ticket: components["schemas"]["LastTicket"];
         };
         /**
          * Severity
@@ -1401,6 +1432,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DigestStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_latest_api_digest_subscriptions__project_key__send_latest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SentLatestOut"];
                 };
             };
             /** @description Validation Error */

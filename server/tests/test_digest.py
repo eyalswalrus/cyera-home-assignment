@@ -451,6 +451,68 @@ async def test_run_now_endpoint(app, client, jira, db):
     assert (await client.get("/api/digest")).json()["last_run"]["outcome"] == "filed 2 tickets in SEC"
 
 
+# --- Send the latest post now -----------------------------------------------------------------
+
+
+async def send_latest(client, key="SEC"):
+    return await client.post(f"/api/digest/subscriptions/{key}/send-latest", headers=await csrf(client))
+
+
+async def test_send_latest_files_the_newest_post_once(app, client, jira):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])  # just subscribed: no post is due yet
+
+    response = await send_latest(client)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["filed"] == 1
+    assert body["ticket"]["key"] == "SEC-42" and body["ticket"]["post_title"] == "When a Worm Steals Your Keys"
+    assert len(bot_issue_requests(jira)) == 1
+
+    again = (await send_latest(client)).json()
+    assert again["filed"] == 0 and again["ticket"]["key"] == "SEC-42"
+    assert len(bot_issue_requests(jira)) == 1  # nothing filed twice
+    assert (await run(app)).outcome.startswith("up to date")  # and the scheduled run agrees
+
+
+async def test_send_latest_also_files_earlier_posts_still_due(app, client, jira, db):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
+    assert (await send_latest(client)).json()["filed"] == 2
+    titles = [json.loads(r.body)["fields"]["summary"] for r in bot_issue_requests(jira)]
+    assert titles == ["NHI Blog Digest: Older featured post", "NHI Blog Digest: When a Worm Steals Your Keys"]
+
+
+async def test_send_latest_without_bot_uses_the_users_connection(app, client, user_jira_writes, no_bot):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    assert (await send_latest(client)).json()["filed"] == 1
+    assert len(user_issue_requests(user_jira_writes)) == 1
+
+
+async def test_send_latest_requires_a_subscription(app, client, jira):
+    await connected_user(client)
+    response = await send_latest(client, "OPS")
+    assert response.status_code == 404 and response.json()["code"] == "digest_not_subscribed"
+
+
+async def test_send_latest_waits_for_a_running_digest(app, client, jira):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    async with app.state.digest.lock:
+        response = await send_latest(client)
+    assert response.status_code == 409 and response.json()["code"] == "digest_already_running"
+
+
+async def test_send_latest_reports_an_unreadable_blog(app, client, jira):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    jira.oauth.get(BLOG).respond(503)
+    response = await send_latest(client)
+    assert response.status_code == 502 and response.json()["code"] == "digest_blog_unavailable"
+
+
 async def test_subscribing_during_a_run_triggers_another_pass(app, monkeypatch):
     """A run in progress has already read the subscriptions; "send the latest post now" must not
     wait until tomorrow."""
