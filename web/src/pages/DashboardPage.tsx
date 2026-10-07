@@ -29,16 +29,17 @@ export function DashboardPage() {
           as {account_name ?? 'you'}.
         </Text>
       </div>
-      <ReportFinding />
+      <ReportFinding cloudId={site?.cloud_id} />
     </Stack>
   )
 }
 
-function ReportFinding() {
+function ReportFinding({ cloudId }: { cloudId?: string }) {
   const me = useMe()
-  // Remember the last project per user in this browser (a convenience, not shared state).
+  // Remember the last project per user and Jira site in this browser (a convenience, not shared
+  // state). Per site, because the same key can be a different project, or none, on another site.
   const [project, setProject] = useLocalStorage<Project | null>({
-    key: `identityhub.project.${me.data?.id}`,
+    key: `identityhub.project.${me.data?.id}.${cloudId}`,
     defaultValue: null,
     getInitialValueInEffect: false,
   })
