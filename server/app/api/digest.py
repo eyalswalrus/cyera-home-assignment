@@ -144,14 +144,16 @@ async def set_subscriptions(
 ) -> DigestStatus:
     settings = get_settings()
     if await digest.set_subscriptions(db, user, settings, runtime, body.project_keys, body.send_latest_now):
-        _start_run(settings, runtime)
+        # A run in progress has already read the subscriptions, so ask it for one more pass.
+        _start_run(settings, runtime, rerun_if_running=True)
     return await get_status(user, db, runtime)
 
 
-def _start_run(settings: Settings, runtime: DigestRuntime) -> bool:
-    """Start a background run unless one is already going (it will pick the change up anyway on
-    its next pass). Returns whether a run was started."""
+def _start_run(settings: Settings, runtime: DigestRuntime, *, rerun_if_running: bool = False) -> bool:
+    """Start a background run unless one is already going (then optionally ask it to run once
+    more when it finishes). Returns whether a new run was started."""
     if runtime.running:
+        runtime.rerun_requested = runtime.rerun_requested or rerun_if_running
         return False
     runtime.task = asyncio.create_task(digest.run_digest(settings, runtime))
     return True

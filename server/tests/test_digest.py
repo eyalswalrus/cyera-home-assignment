@@ -451,6 +451,33 @@ async def test_run_now_endpoint(app, client, jira, db):
     assert (await client.get("/api/digest")).json()["last_run"]["outcome"] == "filed 2 tickets in SEC"
 
 
+async def test_subscribing_during_a_run_triggers_another_pass(app, monkeypatch):
+    """A run in progress has already read the subscriptions; "send the latest post now" must not
+    wait until tomorrow."""
+    import asyncio
+
+    from app.api.digest import _start_run
+    from app.core.config import get_settings
+    from app.services import digest
+    from app.services.digest import LastRun
+
+    release, passes = asyncio.Event(), []
+
+    async def slow_run(settings, runtime):
+        passes.append(1)
+        await release.wait()
+        return LastRun(datetime.now(UTC), "ok")
+
+    monkeypatch.setattr(digest, "_run", slow_run)
+    runtime = app.state.digest
+    assert _start_run(get_settings(), runtime)
+    await asyncio.sleep(0)
+    assert not _start_run(get_settings(), runtime, rerun_if_running=True)
+    release.set()
+    await runtime.task
+    assert len(passes) == 2 and not runtime.running
+
+
 @pytest.mark.parametrize(
     ("now", "expected"),
     [

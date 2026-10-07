@@ -98,6 +98,8 @@ class DigestRuntime:
     bot_checked_at: float = 0.0
     last_run: LastRun | None = None
     next_run_at: datetime | None = None  # the scheduler's planned time, jitter included
+    # Set when subscriptions change during a run (which has already read them): run once more.
+    rerun_requested: bool = False
     task: asyncio.Task | None = None
 
     @property
@@ -260,16 +262,19 @@ async def run_digest(settings: Settings, runtime: DigestRuntime) -> LastRun:
     if runtime.running:
         raise DigestAlreadyRunning()
     async with runtime.lock:
-        try:
-            run = await _run(settings, runtime)
-        except BlogError as exc:
-            run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=str(exc))
-        except Exception as exc:  # keep the scheduler alive, and say what happened
-            log.exception("Blog digest run failed")
-            run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=f"Unexpected error: {exc}")
-        runtime.last_run = run
-        log.info("Blog digest: %s%s", run.outcome, f" ({run.error})" if run.error else "")
-        return run
+        while True:
+            runtime.rerun_requested = False
+            try:
+                run = await _run(settings, runtime)
+            except BlogError as exc:
+                run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=str(exc))
+            except Exception as exc:  # keep the scheduler alive, and say what happened
+                log.exception("Blog digest run failed")
+                run = LastRun(finished_at=datetime.now(UTC), outcome="failed", error=f"Unexpected error: {exc}")
+            runtime.last_run = run
+            log.info("Blog digest: %s%s", run.outcome, f" ({run.error})" if run.error else "")
+            if not runtime.rerun_requested:
+                return run
 
 
 async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
