@@ -26,7 +26,8 @@ You need a Jira Cloud site (a free one from [atlassian.com](https://www.atlassia
 works) and an OAuth 2.0 app that IdentityHub signs in through:
 
 1. Open the [Atlassian developer console](https://developer.atlassian.com/console/myapps/) →
-   **Create** → **OAuth 2.0 integration**, and give it a name (e.g. "IdentityHub local").
+   **Create** → **OAuth 2.0 integration**, give it a name (e.g. "IdentityHub local") and choose the
+   **resource-level grant** (consent is limited to the Jira site you pick).
 2. **Permissions** → **Jira API** → **Add**, then **Configure** and add the classic scopes
    `read:jira-work`, `write:jira-work` and `read:jira-user`.
    (`offline_access`, for refresh tokens, is requested at sign-in and needs no setup.)

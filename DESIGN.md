@@ -166,6 +166,10 @@ To make this robust in production:
 can revoke access from their Atlassian account, and we request only the scopes we need:
 `read:jira-work`, `write:jira-work`, `read:jira-user`, and `offline_access` for a refresh token.
 The cost is reviewer setup: registering an Atlassian OAuth app takes about five minutes (README).
+That is a testing convenience only. Atlassian requires a real integration to ship **one**
+distributable OAuth app (shared with all customers, ideally listed on the Marketplace) rather than
+asking each customer to create their own; a production IdentityHub would own that app and its
+secret.
 
 ### The flow
 
