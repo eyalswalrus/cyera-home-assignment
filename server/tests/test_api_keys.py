@@ -291,3 +291,13 @@ async def test_unknown_permission_fields_fail_closed(api_key, anonymous, db, con
     assert response.status_code == 401 and response.json()["code"] == "api_key_permissions_unreadable"
     # ...but the key is still listed, so the user can see and revoke it.
     assert (await connected.get("/api/api-keys")).status_code == 200
+
+
+async def test_public_api_reference_lists_only_the_public_api(client):
+    schema = (await client.get("/api/v1/openapi.json")).json()
+    assert schema["info"]["title"] == "IdentityHub public API"
+    assert schema["servers"] == [{"url": "/api"}] and list(schema["paths"]) == ["/v1/findings"]
+    assert "ApiKey" in schema["components"]["securitySchemes"]
+    assert "ErrorBody" in schema["components"]["schemas"]
+    page = await client.get("/api/v1/docs")
+    assert page.status_code == 200 and "/api/v1/openapi.json" in page.text

@@ -109,7 +109,9 @@ curl -X POST http://localhost:8000/api/v1/findings \
   -d '{"project_key": "SEC", "summary": "Stale Service Account: svc-deploy-prod", "severity": "high"}'
 ```
 
-Interactive documentation for every endpoint and error is at http://localhost:8000/docs.
+The API reference (authentication, errors, rate limits, and *Try it out*) is at
+http://localhost:8000/api/v1/docs, also linked from **Settings → API keys**. The full schema,
+including the internal endpoints the web UI uses, is at http://localhost:8000/docs.
 
 ## Bonus: NHI Blog Digest
 

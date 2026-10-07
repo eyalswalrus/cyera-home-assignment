@@ -56,7 +56,7 @@ export function SettingsPage() {
             </Title>
             <Text size="sm" c="dimmed">
               Let scanners and CI/CD pipelines create findings through the{' '}
-              <Anchor href="/docs#/public%20API%20v1" target="_blank" rel="noopener noreferrer" inherit>
+              <Anchor href="/api/v1/docs" target="_blank" rel="noopener noreferrer" inherit>
                 REST API
               </Anchor>
               . A key acts as you, can only post to the projects you choose, and expires.

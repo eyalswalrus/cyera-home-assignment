@@ -262,7 +262,7 @@ function NewKeyReveal({ created, onDone }: { created: ApiKeyCreated; onDone: () 
         </Group>
         <Text size="sm">
           Example request (see the{' '}
-          <Anchor href="/docs#/public%20API%20v1" target="_blank" rel="noopener noreferrer" inherit>
+          <Anchor href="/api/v1/docs" target="_blank" rel="noopener noreferrer" inherit>
             API docs
           </Anchor>
           ):

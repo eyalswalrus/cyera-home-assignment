@@ -191,6 +191,19 @@ describe('recent tickets', () => {
   })
 })
 
+describe('navigation', () => {
+  it('opens Settings from the account menu, not the top bar', async () => {
+    const { user, router } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Report an NHI finding' })
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Account menu' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Settings' }))
+    expect(router.state.location.pathname).toBe('/settings')
+    // The API docs link opens the public API reference only.
+    expect(await screen.findByRole('link', { name: 'REST API' })).toHaveAttribute('href', '/api/v1/docs')
+  })
+})
+
 describe('toApiError', () => {
   it('maps validation errors to fields', () => {
     const error = toApiError(422, {

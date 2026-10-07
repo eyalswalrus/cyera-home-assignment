@@ -18,7 +18,7 @@ from secure import (
 from secure.middleware import SecureASGIMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-DOCS_PATHS = ("/docs", "/redoc")
+DOCS_PATHS = ("/docs", "/redoc", "/api/v1/docs")
 SWAGGER_CDN = "https://cdn.jsdelivr.net"
 
 

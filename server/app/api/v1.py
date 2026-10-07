@@ -7,6 +7,7 @@ accepts the browser session cookie, which is also why it is exempt from CSRF che
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from limits import parse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
@@ -56,14 +57,19 @@ router = APIRouter(
     dependencies=[Depends(RateLimit("api_v1_ip", "120/minute"))],
 )
 
-_ERRORS = {
-    401: {"description": "Missing, invalid, revoked or expired API key"},
-    403: {"description": "The key lacks the permission or project, or its owner lacks Jira permission"},
-    404: {"description": "Project not found in Jira, or not visible to the key owner"},
-    409: {"description": "The key owner's Jira connection needs attention (not connected / reconnect)"},
-    422: {"description": "Invalid input, or Jira rejected the ticket"},
-    429: {"description": "Rate limit exceeded; see the Retry-After header"},
-    502: {"description": "Jira is unavailable"},
+class ErrorBody(BaseModel):
+    detail: str = Field(examples=["This API key isn't allowed to create tickets in OPS. It is limited to: SEC."])
+    code: str = Field(examples=["api_key_project_forbidden"], description="Stable, machine-readable error code")
+
+
+_ERRORS: dict[int | str, dict] = {
+    401: {"model": ErrorBody, "description": "Missing, invalid, revoked or expired API key"},
+    403: {"model": ErrorBody, "description": "The key lacks the permission or project, or its owner lacks Jira permission"},
+    404: {"model": ErrorBody, "description": "Project not found in Jira, or not visible to the key owner"},
+    409: {"model": ErrorBody, "description": "The key owner's Jira connection needs attention (not connected / reconnect)"},
+    422: {"description": "Invalid input (each field listed under `detail`), or Jira rejected the ticket"},
+    429: {"model": ErrorBody, "description": "Rate limit exceeded; see the Retry-After header"},
+    502: {"model": ErrorBody, "description": "Jira is unavailable"},
 }
 
 

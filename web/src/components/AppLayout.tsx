@@ -1,13 +1,12 @@
 import { AppShell, Button, Container, Group, Menu, Text, UnstyledButton } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { IconChevronDown, IconLogout, IconShieldLock } from '@tabler/icons-react'
+import { IconChevronDown, IconLogout, IconSettings, IconShieldLock } from '@tabler/icons-react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { useLogout, useMe } from '../api/hooks'
 
 const NAV = [
   { to: '/', label: 'Report finding' },
   { to: '/recent', label: 'Recent tickets' },
-  { to: '/settings', label: 'Settings' },
 ]
 
 export function AppLayout() {
@@ -64,6 +63,11 @@ export function AppLayout() {
                     {item.label}
                   </Menu.Item>
                 ))}
+                <Menu.Divider hiddenFrom="xs" />
+                <Menu.Item leftSection={<IconSettings size={16} />} component={NavLink} to="/settings">
+                  Settings
+                </Menu.Item>
+                <Menu.Divider />
                 <Menu.Item leftSection={<IconLogout size={16} />} onClick={signOut} disabled={logout.isPending}>
                   Sign out
                 </Menu.Item>

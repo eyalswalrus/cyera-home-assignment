@@ -145,5 +145,6 @@ async def test_security_headers(client):
     assert headers["x-content-type-options"] == "nosniff"
     assert "strict-transport-security" not in headers  # plain HTTP in tests
 
-    docs_csp = _csp((await client.get("/docs")).headers["content-security-policy"])
-    assert "https://cdn.jsdelivr.net" in docs_csp["script-src"]
+    for docs in ("/docs", "/api/v1/docs"):
+        docs_csp = _csp((await client.get(docs)).headers["content-security-policy"])
+        assert "https://cdn.jsdelivr.net" in docs_csp["script-src"]
