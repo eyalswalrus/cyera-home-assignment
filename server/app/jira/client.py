@@ -56,6 +56,11 @@ class JiraTarget(Protocol):
 
     site_url: str
 
+    @property
+    def identity(self) -> str:
+        """Who Jira sees: per-account caches are keyed by this."""
+        ...
+
     def client(self) -> JiraCloud: ...
 
 
@@ -66,6 +71,11 @@ class ActiveConnection:
     cloud_id: str
     site_url: str
     access_token: str
+    account_id: str | None = None
+
+    @property
+    def identity(self) -> str:
+        return f"{self.cloud_id}:{self.account_id or self.access_token}"
 
     def client(self) -> JiraCloud:
         return _watched(build_client(self.cloud_id, self.access_token))
@@ -79,6 +89,10 @@ class BotConnection:
     site_url: str
     email: str
     api_token: str
+
+    @property
+    def identity(self) -> str:
+        return f"bot:{self.site_url}:{self.email}"
 
     def client(self) -> JiraCloud:
         return _watched(

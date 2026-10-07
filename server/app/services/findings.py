@@ -2,7 +2,6 @@
 
 import uuid
 from datetime import datetime
-from urllib.parse import urlparse
 
 from cachetools import TTLCache
 from sqlalchemy import select
@@ -27,7 +26,9 @@ PREFERRED_ISSUE_TYPES = ("Task", "Bug", "Story")
 
 # Rate-limit savings (see app/jira/client.py). In-process caches; several replicas would each keep
 # their own, which is fine for data this stable.
-# * Issue types per (site, project) for an hour: creating a ticket then costs 1 point, not ~7.
+# * Issue types per (Jira account, project) for an hour: creating a ticket then costs 1 point, not
+#   ~7. Per account, not per site: the lookup is also the check that the account can create issues
+#   there (giving a clear "no permission" error), so one user's lookup mustn't stand in for another's.
 #   Dropped when Jira rejects a create, so a changed project configuration is picked up.
 # * The project picker per user for 5 minutes. Permission checks (API keys, digest) never use it.
 _issue_types: TTLCache[tuple[str, str], str] = TTLCache(maxsize=2048, ttl=3600)
@@ -147,7 +148,7 @@ async def recent_findings(db: AsyncSession, user: User, project_key: str) -> lis
 
 
 async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:
-    cache_key = (_site(conn), project_key)
+    cache_key = (conn.identity, project_key)
     if (cached := _issue_types.get(cache_key)) is not None:
         return cached
     types = [t for t in await client.get_issue_types(conn, project_key) if not t.get("subtask")]
@@ -162,11 +163,7 @@ async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:
 
 
 def forget_issue_type(conn: JiraTarget, project_key: str) -> None:
-    _issue_types.pop((_site(conn), project_key), None)
-
-
-def _site(conn: JiraTarget) -> str:
-    return urlparse(conn.site_url).netloc.lower()
+    _issue_types.pop((conn.identity, project_key), None)
 
 
 def _description(finding: FindingCreate) -> adf.Node:

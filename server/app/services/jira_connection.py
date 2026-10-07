@@ -94,7 +94,7 @@ async def get_active_connection(db: AsyncSession, user: User) -> ActiveConnectio
         raise JiraSiteSelectionRequired()
     access_token = await _access_token(db, connection)
     assert connection.cloud_id is not None and connection.site_url is not None
-    return ActiveConnection(connection.cloud_id, connection.site_url, access_token)
+    return ActiveConnection(connection.cloud_id, connection.site_url, access_token, connection.account_id)
 
 
 @asynccontextmanager

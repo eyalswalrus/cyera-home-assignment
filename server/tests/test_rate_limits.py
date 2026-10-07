@@ -1,14 +1,19 @@
 """Staying within Jira's rate limits: caching, burst retries, the hourly quota guard, digest jitter."""
 
 import random
+import re
 from datetime import UTC, datetime
+
+from httpx import ASGITransport, AsyncClient
 
 from app.jira.client import BotConnection, quota_guard, search_projects
 from app.services.digest import planned_run_at
 
-from helpers import JIRA_API
+from helpers import JIRA_API, connect, sign_up_and_login
 from test_findings import ISSUE_TYPES, connected, post_finding  # noqa: F401  (fixture)
 
+# The same pattern the `atlassian` fixture registers (re.compile caches it), so it can be replaced.
+MYSELF = re.compile(r"https://api\.atlassian\.com/ex/jira/[^/]+/rest/api/3/myself")
 PROJECTS = {"values": [{"id": "10000", "key": "SEC", "name": "Security"}]}
 
 
@@ -122,3 +127,19 @@ def test_digest_runs_at_a_random_point_within_the_jitter_window():
     assert all(start <= run <= start.replace(minute=30) for run in runs)
     assert len(set(runs)) > 1
     assert planned_run_at("09:00", 0, now) == start
+
+
+async def test_issue_type_cache_is_per_jira_account(connected, atlassian, app):
+    """The issue-type lookup doubles as the "can you create issues here?" check, so one account's
+    cached answer must not be used for another."""
+    assert (await post_finding(connected)).status_code == 201  # alice's lookup is cached
+    atlassian.jira.replace(
+        "GET", f"{JIRA_API}/issue/createmeta/SEC/issuetypes", json={"errorMessages": ["No project"]}, status=404
+    )
+    atlassian.jira.replace("GET", MYSELF, json={"accountId": "acc-bob", "displayName": "Bob"})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as bob:
+        await sign_up_and_login(bob, "bob@example.com")
+        await connect(bob)
+        response = await post_finding(bob)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Project SEC wasn't found, or your Jira account can't access it."
