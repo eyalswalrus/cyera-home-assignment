@@ -48,6 +48,7 @@ function About({ status }: { status: DigestStatus }) {
   const schedule = (
     <>
       Summaries: {status.summarizer ?? 'unknown'}. Runs daily at {status.daily_at_utc} UTC
+      {status.jitter_minutes > 0 && <>, starting within {status.jitter_minutes} minutes</>}
       {status.next_run_at && <> (next: {formatDateTime(status.next_run_at)})</>}.
     </>
   )

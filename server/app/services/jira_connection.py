@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.models import JiraConnection, JiraConnectionStatus, User
 from app.jira import oauth
-from app.jira.client import ActiveConnection, get_myself
+from app.jira.client import ActiveConnection, get_account
 from app.jira.errors import (
     JiraNoSites,
     JiraNotConfigured,
@@ -125,7 +125,7 @@ async def _require_connection(db: AsyncSession, user: User) -> JiraConnection:
 
 
 async def _attach_site(connection: JiraConnection, site: JiraSite, access_token: str) -> None:
-    myself = await get_myself(site.cloud_id, access_token)
+    myself = await get_account(ActiveConnection(site.cloud_id, site.url, access_token))
     connection.cloud_id, connection.site_url, connection.site_name = site.cloud_id, site.url, site.name
     connection.account_id = myself.get("accountId")
     connection.account_name = myself.get("displayName")

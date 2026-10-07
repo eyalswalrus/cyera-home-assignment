@@ -18,6 +18,7 @@ once and stored; every project and every later run reuses that summary.
 
 import asyncio
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,9 +35,16 @@ from app.digest.blog import BlogError, BlogPost, fetch_recent_posts
 from app.digest.summarizers import Summarizer, SummaryError, choose_summarizer
 from app.jira import adf, client
 from app.jira.client import BotConnection, JiraTarget
-from app.jira.errors import JiraError, JiraForbidden, JiraNotFound, JiraReauthRequired, JiraUnavailable
+from app.jira.errors import (
+    JiraError,
+    JiraForbidden,
+    JiraNotFound,
+    JiraReauthRequired,
+    JiraUnavailable,
+    JiraValidationError,
+)
 from app.schemas.findings import Project
-from app.services.findings import APP_LABEL, browse_url, pick_issue_type
+from app.services.findings import APP_LABEL, browse_url, forget_issue_type, pick_issue_type
 from app.services.jira_connection import get_connection, use_jira
 
 log = logging.getLogger(__name__)
@@ -89,6 +97,7 @@ class DigestRuntime:
     bot_error: str | None = None
     bot_checked_at: float = 0.0
     last_run: LastRun | None = None
+    next_run_at: datetime | None = None  # the scheduler's planned time, jitter included
     task: asyncio.Task | None = None
 
     @property
@@ -479,16 +488,20 @@ async def _file_ticket(
         adf.paragraph(adf.text("Published: ", "strong"), adf.text(f"{post.published_at:%Y-%m-%d}")),
         adf.paragraph(adf.text(f"{filed_by}. Summary: {post.summarizer_description}.", "em")),
     )
-    issue = await client.create_issue(
-        jira,
-        {
-            "project": {"key": project_key},
-            "issuetype": {"id": await pick_issue_type(jira, project_key)},
-            "summary": title,
-            "description": description,
-            "labels": [APP_LABEL, DIGEST_LABEL],
-        },
-    )
+    try:
+        issue = await client.create_issue(
+            jira,
+            {
+                "project": {"key": project_key},
+                "issuetype": {"id": await pick_issue_type(jira, project_key)},
+                "summary": title,
+                "description": description,
+                "labels": [APP_LABEL, DIGEST_LABEL],
+            },
+        )
+    except JiraValidationError:
+        forget_issue_type(jira, project_key)
+        raise
     db.add(
         DigestDelivery(
             post_id=post.id,
@@ -512,15 +525,21 @@ def next_run_at(daily_at: str, now: datetime) -> datetime:
     return candidate if candidate > now else candidate + timedelta(days=1)
 
 
+def planned_run_at(daily_at: str, jitter_minutes: int, now: datetime, rng: random.Random | None = None) -> datetime:
+    """The next run: DIGEST_DAILY_AT plus a random offset of up to `jitter_minutes`."""
+    offset = (rng or random).uniform(0, jitter_minutes * 60)
+    return next_run_at(daily_at, now) + timedelta(seconds=offset)
+
+
 async def schedule(settings: Settings, runtime: DigestRuntime, startup_delay_seconds: float = 60) -> None:
     """A catch-up run shortly after startup (in case the server was down at the scheduled time;
     cheap, since already-filed posts and stored summaries are reused), then daily at
-    DIGEST_DAILY_AT UTC. In-process: exactly one instance of the app should run it."""
+    DIGEST_DAILY_AT UTC plus jitter. In-process: exactly one instance of the app should run it."""
     await asyncio.sleep(startup_delay_seconds)
     while True:
         try:
             await run_digest(settings, runtime)
         except DigestAlreadyRunning:
             pass
-        wait = (next_run_at(settings.digest_daily_at, datetime.now(UTC)) - datetime.now(UTC)).total_seconds()
-        await asyncio.sleep(max(wait, 1))
+        runtime.next_run_at = planned_run_at(settings.digest_daily_at, settings.digest_jitter_minutes, datetime.now(UTC))
+        await asyncio.sleep(max((runtime.next_run_at - datetime.now(UTC)).total_seconds(), 1))

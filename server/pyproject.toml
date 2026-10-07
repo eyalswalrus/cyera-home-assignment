@@ -23,6 +23,8 @@ dependencies = [
     "trafilatura>=2.3.0",
     "beautifulsoup4>=4.15.0",
     "httpx2>=2.13.1",
+    "tenacity>=9.1.4",
+    "cachetools>=7.2.1",
 ]
 
 [dependency-groups]

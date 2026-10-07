@@ -559,6 +559,11 @@ export interface components {
              * @description Daily run time, HH:MM UTC
              */
             daily_at_utc: string;
+            /**
+             * Jitter Minutes
+             * @description Runs start up to this many minutes after daily_at_utc
+             */
+            jitter_minutes: number;
             /** Next Run At */
             next_run_at: string | null;
             /** Running */

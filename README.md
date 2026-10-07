@@ -138,7 +138,8 @@ as Jira is connected; two optional settings improve it:
 
   - **Nothing:** a built-in extractive summary is used, and tickets say so.
 
-The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`) and once shortly after startup; **Run now**
+The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`, starting at a random point in the following
+`DIGEST_JITTER_MINUTES`, default 30) and once shortly after startup; **Run now**
 in Settings runs it on demand. Each post is summarized once and stored. A new subscription receives
 posts published after subscribing; to see a ticket right away, tick **"Also send the latest blog
 post … now"** when adding the project.

@@ -27,6 +27,8 @@ def test_env(tmp_path, monkeypatch) -> Iterator[None]:
     from app.core.config import Settings
 
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    # Retry Jira burst limits without actually waiting.
+    monkeypatch.setattr("app.jira.client._wait_retry_after", lambda retry_state: 0)
     _reset_caches()
     yield
     _reset_caches()
@@ -35,9 +37,13 @@ def test_env(tmp_path, monkeypatch) -> Iterator[None]:
 def _reset_caches() -> None:
     from app.core import config, crypto
     from app.db import session
+    from app.jira.client import quota_guard
+    from app.services import findings
 
     config.get_settings.cache_clear()
     crypto.get_fernet.cache_clear()
+    quota_guard.clear()
+    findings.clear_caches()
     session._engine = None
     session._sessionmaker = None
 

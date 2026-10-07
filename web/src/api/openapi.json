@@ -1405,6 +1405,11 @@
             "title": "Daily At Utc",
             "description": "Daily run time, HH:MM UTC"
           },
+          "jitter_minutes": {
+            "type": "integer",
+            "title": "Jitter Minutes",
+            "description": "Runs start up to this many minutes after daily_at_utc"
+          },
           "next_run_at": {
             "anyOf": [
               {
@@ -1448,6 +1453,7 @@
           "site_url",
           "summarizer",
           "daily_at_utc",
+          "jitter_minutes",
           "next_run_at",
           "running",
           "last_run",

@@ -13,6 +13,7 @@ const ready: DigestStatus = {
   site_url: 'https://acme.atlassian.net',
   summarizer: 'local model llama3.2:3b (Ollama)',
   daily_at_utc: '09:00',
+  jitter_minutes: 30,
   next_run_at: new Date(Date.now() + 3_600_000).toISOString(),
   running: false,
   last_run: {

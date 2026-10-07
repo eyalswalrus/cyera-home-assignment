@@ -2,7 +2,9 @@
 
 import uuid
 from datetime import datetime
+from urllib.parse import urlparse
 
+from cachetools import TTLCache
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,16 +18,36 @@ from app.services.jira_connection import use_jira
 # Every ticket IdentityHub creates carries this label; "recent tickets" is a JQL search on it.
 APP_LABEL = "identityhub"
 RECENT_LIMIT = 10
-PROJECT_SEARCH_LIMIT = 50
+# The picker loads one page and lets Jira search the rest. Jira's rate limit charges a point per
+# project returned, so a smaller first page is cheaper on every page view.
+PROJECT_SEARCH_LIMIT = 20
 # Preferred issue types, in order. Projects define their own types, so fall back to any
 # non-subtask type when none of these exist.
 PREFERRED_ISSUE_TYPES = ("Task", "Bug", "Story")
 
+# Rate-limit savings (see app/jira/client.py). In-process caches; several replicas would each keep
+# their own, which is fine for data this stable.
+# * Issue types per (site, project) for an hour: creating a ticket then costs 1 point, not ~7.
+#   Dropped when Jira rejects a create, so a changed project configuration is picked up.
+# * The project picker per user for 5 minutes. Permission checks (API keys, digest) never use it.
+_issue_types: TTLCache[tuple[str, str], str] = TTLCache(maxsize=2048, ttl=3600)
+_project_lists: TTLCache[tuple[uuid.UUID, str, str], list[Project]] = TTLCache(maxsize=2048, ttl=300)
+
+
+def clear_caches() -> None:
+    _issue_types.clear()
+    _project_lists.clear()
+
 
 async def list_projects(db: AsyncSession, user: User, query: str | None) -> list[Project]:
     async with use_jira(db, user) as conn:
+        cache_key = (user.id, conn.cloud_id, (query or "").strip().lower())
+        if (cached := _project_lists.get(cache_key)) is not None:
+            return cached
         projects = await client.search_projects(conn, query, PROJECT_SEARCH_LIMIT)
-    return [Project(id=p["id"], key=p["key"], name=p["name"]) for p in projects]
+    result = [Project(id=p["id"], key=p["key"], name=p["name"]) for p in projects]
+    _project_lists[cache_key] = result
+    return result
 
 
 async def create_finding(
@@ -49,6 +71,9 @@ async def create_finding(
                     "labels": _labels(finding),
                 },
             )
+        except JiraValidationError:
+            forget_issue_type(conn, key)  # the cached type may be stale; refetch next time
+            raise
         except JiraForbidden as exc:
             raise JiraForbidden(f"Your Jira account doesn't have permission to create issues in {key}.") from exc
         except JiraNotFound as exc:
@@ -122,14 +147,26 @@ async def recent_findings(db: AsyncSession, user: User, project_key: str) -> lis
 
 
 async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:
+    cache_key = (_site(conn), project_key)
+    if (cached := _issue_types.get(cache_key)) is not None:
+        return cached
     types = [t for t in await client.get_issue_types(conn, project_key) if not t.get("subtask")]
     by_name = {t["name"]: t["id"] for t in types}
-    for name in PREFERRED_ISSUE_TYPES:
-        if name in by_name:
-            return by_name[name]
-    if types:
-        return types[0]["id"]
-    raise JiraProjectUnsupported()
+    chosen = next((by_name[name] for name in PREFERRED_ISSUE_TYPES if name in by_name), None)
+    if chosen is None and types:
+        chosen = types[0]["id"]
+    if chosen is None:
+        raise JiraProjectUnsupported()
+    _issue_types[cache_key] = chosen
+    return chosen
+
+
+def forget_issue_type(conn: JiraTarget, project_key: str) -> None:
+    _issue_types.pop((_site(conn), project_key), None)
+
+
+def _site(conn: JiraTarget) -> str:
+    return urlparse(conn.site_url).netloc.lower()
 
 
 def _description(finding: FindingCreate) -> adf.Node:

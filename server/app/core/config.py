@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     digest_blog_url: str = "https://www.oasis.security/blog"
     # Daily run time, HH:MM in UTC. The server also runs a catch-up shortly after it starts.
     digest_daily_at: str = Field(default="09:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    # Each run starts at a random point this many minutes after DIGEST_DAILY_AT, so deployments don't
+    # all call Jira at the same moment (Atlassian's rate-limit guidance).
+    digest_jitter_minutes: int = Field(default=30, ge=0, le=120)
 
     # Who writes the summary. "auto" picks the first available: Claude (if ANTHROPIC_API_KEY is
     # set), then a local Ollama model (if reachable), then a built-in extractive summary.

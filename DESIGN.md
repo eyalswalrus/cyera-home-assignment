@@ -13,7 +13,7 @@ live in the [README](README.md).
 | **FastAPI + Pydantic** backend | Request/response validation and OpenAPI docs come for free, which suits a product whose second consumer is a REST API for scanners and CI pipelines. |
 | **React + Vite + TypeScript** frontend | Clear separation: the UI is a static app that only talks to `/api`. |
 | **One origin** - FastAPI serves the built UI | No CORS configuration, and session cookies stay first-party. In development, Vite proxies `/api` to FastAPI so the browser still sees one origin. |
-| **SQLite** | Zero setup for reviewers. All access goes through SQLAlchemy, so moving to Postgres is a connection-string change (plus migrations, see section 11). |
+| **SQLite** | Zero setup for reviewers. All access goes through SQLAlchemy, so moving to Postgres is a connection-string change (plus migrations, see section 12). |
 | **Docker Compose** as the primary run path | `docker compose up` is the lowest-friction way to run both halves. |
 | **Locked dependencies** (`uv.lock`, `package-lock.json`) | The Docker build installs exactly the tested versions (`uv sync --locked`, `npm ci`), so the image is reproducible. |
 
@@ -29,6 +29,7 @@ business logic and the glue between them.
 | Jira REST calls | atlassian-python-api (`JiraCloud`) |
 | CSRF | starlette-csrf |
 | Rate limiting | limits, used as a FastAPI dependency |
+| Jira retries and caches | tenacity (burst-limit retries), cachetools (TTL caches) |
 | Security headers | secure |
 | Encryption at rest | cryptography (`MultiFernet`) |
 | Configuration | pydantic-settings |
@@ -244,8 +245,9 @@ status, a stable `code` and a user-facing message. One exception handler turns t
 
 - **Only projects the user can create issues in** (`/project/search?action=create`), not every
   project they can browse, so the picker never offers a project that would fail on submit.
-- **Searchable, 50 at a time.** The picker filters by name or key on the server; users with many
-  projects type to narrow the list rather than scrolling through hundreds.
+- **Searchable, 20 at a time.** The picker filters by name or key on the server; users with many
+  projects type to narrow the list rather than scrolling through hundreds. Each page costs Jira
+  rate-limit points per project returned, so it is small and cached (section 11).
 
 ### Fields
 
@@ -315,7 +317,8 @@ is about 20 lines.
 | 401 | "Reconnect Jira" (connection marked `needs_reauth`) | 409 |
 | 403 | "Your Jira account doesn't have permission to create issues in SEC." | 403 |
 | 404 | "Project SEC wasn't found, or your Jira account can't access it." | 404 |
-| 429 | "Jira is receiving too many requests right now…" | 429 |
+| 429, short burst limit | Nothing, if a quick retry succeeds; otherwise "Jira is receiving too many requests right now…" | 429 + `Retry-After` |
+| 429, hourly quota used up | "IdentityHub has used its hourly Jira API quota. It resets in about N minutes…" | 429 + `Retry-After` |
 | 5xx / network | "Jira couldn't be reached. Please try again in a moment." | 502 |
 
 Input problems (missing title, unknown fields, invalid project key) are rejected with a 422
@@ -668,7 +671,78 @@ shorter), log each purge, and support deletion on request (e.g. when a customer 
 
 ---
 
-## 11. Known limitations and production next steps
+## 11. Jira rate limits
+
+### How Jira limits apps
+
+Since March 2026, Jira Cloud meters OAuth apps in **points per hour**
+([Atlassian: rate limiting](https://developer.atlassian.com/cloud/jira/platform/rate-limiting/)).
+Every request costs points: a base cost, plus more per object it returns (each project, issue or
+issue type). On top of the hourly quota there are per-second burst limits per site and endpoint,
+and a limit on writes to a single issue.
+
+| Tier | Quota | Who |
+|---|---|---|
+| Tier 1 (default) | **65,000 points/hour, shared by every customer of the app** | All apps |
+| Tier 2 | A separate quota per customer site, scaling with its size (e.g. Enterprise: 150,000 + 30 per user, up to 500,000/hour) | Apps Atlassian approves after a review |
+
+The bot account used by the digest authenticates with an API token, which is outside the OAuth
+points quota (only the burst limits apply).
+
+### What IdentityHub costs, and where it breaks
+
+Approximate points per action before this work: **~51** to open the dashboard (project search, 50
+projects), **~11** for the recent-tickets list, **~7** to create a ticket (issue-type lookup and
+the create). On Tier 1 that means trouble at roughly **175 active users an hour**, or **~9,000
+tickets an hour** across all customers. A few busy scanners on the API could use up the quota for
+everyone. The limit is shared, so one customer's burst becomes every customer's outage.
+
+### What's implemented
+
+- **Fewer, cheaper calls:**
+  - the issue type for each project is cached for an hour and dropped if Jira rejects a create
+    with it (a project's configuration changed);
+  - each user's project lists are cached for 5 minutes;
+  - the picker loads 20 projects rather than 50.
+
+  In a steady state, creating a ticket is one Jira call.
+- **Each 429 handled by its cause** (`RateLimit-Reason`), in `app/jira/client.py`:
+  - **Burst limits** are retried up to 3 times, waiting `Retry-After` plus random jitter (tenacity),
+    if the wait is 5 seconds or less. Otherwise the user gets a 429 with `Retry-After`.
+  - **An exhausted hourly quota** opens a circuit breaker until `Retry-After`. Calls to that pool
+    are refused immediately with a clear message: every customer for the global pool, one site for a
+    per-site pool. Retrying wouldn't succeed before the reset and would only waste threads.
+  - atlassian-python-api's own 429 handling is switched off. By default it sleeps for
+    `Retry-After` (up to minutes) inside a worker thread, and it stacks its retries on top of ours.
+- **Early warning:** responses whose `RateLimit` headers say the limit is near are logged (at most
+  once a minute).
+- **The digest is spread out:** each run starts at a random time within `DIGEST_JITTER_MINUTES`
+  (default 30) after `DIGEST_DAILY_AT`. This follows Atlassian's advice not to schedule work on
+  the hour.
+
+### In a production setting
+
+- **Apply for Tier 2.** It is the only change that gives each customer their own quota, so one
+  customer can no longer use up another's.
+- **A points budget per customer, enforced at our API.** Before Tier 2, divide the shared quota
+  between customers, and give scanner traffic its own allowance so it can't starve interactive
+  users. Refuse requests at our edge (429 + `Retry-After`) before they reach Jira.
+- **Queue API submissions.** Accept a finding with `202 Accepted` and a status URL, and create the
+  ticket from a worker that paces itself against the budget. A scanner sending a burst of 5,000
+  findings drains slowly instead of failing.
+- **Webhooks instead of polling.** Keep a local copy of each project's IdentityHub tickets,
+  updated by Jira webhooks (created, updated, deleted). Recent tickets and the deleted flag then
+  cost no Jira calls.
+- **Shared state.** Caches and the circuit breaker are in memory, per process. With several
+  replicas they belong in Redis, so one replica's 429 protects the others.
+- **Metrics and alerts** from the `RateLimit` headers: points used per customer and per endpoint,
+  with an alert well before the quota is reached.
+- **Never load-test against real customer sites.** Atlassian counts it against the quota and
+  warns that it may block the app.
+
+---
+
+## 12. Known limitations and production next steps
 
 - **SSO and provisioning** with SAML/OIDC and SCIM instead of local passwords (section 3).
 - **Organizations** with membership and Row-Level Security (section 2).
@@ -684,6 +758,8 @@ shorter), log each purge, and support deletion on request (e.g. when a customer 
 - **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
   while submitting; the API could accept an `Idempotency-Key` header.
 - **API-key rate limits are in memory** (single process), like the login limit.
+- **Jira quota protection is per process** and IdentityHub runs on the shared Tier 1 pool
+  (section 11).
 - **Digest fallbacks are POC conveniences:** filing with a subscriber's account, a local CPU model,
   extractive summaries (section 9, *In a production setting*).
 - **The digest scheduler runs in-process,** with its last-run status in memory (summaries and

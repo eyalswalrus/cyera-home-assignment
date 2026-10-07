@@ -57,6 +57,7 @@ class DigestStatus(BaseModel):
     site_url: str | None
     summarizer: str | None
     daily_at_utc: str = Field(description="Daily run time, HH:MM UTC")
+    jitter_minutes: int = Field(description="Runs start up to this many minutes after daily_at_utc")
     next_run_at: datetime | None
     running: bool
     last_run: LastRunOut | None
@@ -85,7 +86,10 @@ async def get_status(
         site_url=settings.digest_jira_site_url if settings.digest_bot_configured else None,
         summarizer=summarizer,
         daily_at_utc=settings.digest_daily_at,
-        next_run_at=digest.next_run_at(settings.digest_daily_at, datetime.now(UTC)) if settings.jira_configured else None,
+        next_run_at=(runtime.next_run_at or digest.next_run_at(settings.digest_daily_at, datetime.now(UTC)))
+        if settings.jira_configured
+        else None,
+        jitter_minutes=settings.digest_jitter_minutes,
         running=runtime.running,
         last_run=LastRunOut(**last.__dict__) if last else None,
         subscriptions=[
