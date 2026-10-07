@@ -1,5 +1,5 @@
-import { ActionIcon, Alert, Anchor, Badge, Group, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
-import { IconExternalLink, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { ActionIcon, Alert, Anchor, Badge, Box, Group, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
+import { IconExternalLink, IconRefresh, IconTrashX } from '@tabler/icons-react'
 import type { ReactNode } from 'react'
 import { type Project, type RecentTicket, useRecentTickets } from '../api/hooks'
 import { formatDateTime, timeAgo } from '../lib/time'
@@ -60,7 +60,7 @@ export function RecentTickets({ project }: { project: Project | null }) {
 function TicketHeader({ ticket, children }: { ticket: RecentTicket; children: ReactNode }) {
   return (
     <Group gap="xs" wrap="nowrap" justify="space-between">
-      <Badge variant="light" color={ticket.deleted ? 'gray' : undefined}>
+      <Badge variant="light" color={ticket.deleted ? 'gray' : undefined} td={ticket.deleted ? 'line-through' : undefined}>
         {ticket.key}
       </Badge>
       <Group gap={6} wrap="nowrap">
@@ -100,24 +100,35 @@ function TicketLink({ ticket }: { ticket: RecentTicket }) {
 }
 
 /** A ticket you created that Jira no longer returns: kept in the list so a finding can't silently
- * disappear, but without a link, since there is nothing to open. */
+ * disappear, clearly marked, and without a link since there is nothing to open. */
 function DeletedTicket({ ticket }: { ticket: RecentTicket }) {
   return (
-    <div style={{ padding: 'var(--mantine-spacing-xs)' }} aria-label={`${ticket.key}, no longer in Jira`}>
+    <Box
+      p="xs"
+      aria-label={`${ticket.key}, deleted in Jira`}
+      style={{
+        borderRadius: 'var(--mantine-radius-sm)',
+        borderLeft: '3px solid var(--mantine-color-red-6)',
+        background: 'var(--mantine-color-red-light)',
+      }}
+    >
       <TicketHeader ticket={ticket}>
         <Tooltip
-          label="You created this ticket, but Jira no longer has it: it was deleted, moved to another project, or you lost access."
+          label="You created this ticket, but Jira no longer has it. It was deleted, moved to another project, or you lost access to it."
           multiline
           w={260}
         >
-          <Badge size="xs" color="gray" variant="outline" leftSection={<IconTrash size={10} />}>
-            No longer in Jira
+          <Badge size="sm" color="red" variant="filled" leftSection={<IconTrashX size={12} />}>
+            Deleted in Jira
           </Badge>
         </Tooltip>
       </TicketHeader>
       <Text size="sm" mt={4} lineClamp={2} c="dimmed" td="line-through" title={ticket.summary}>
         {ticket.summary}
       </Text>
-    </div>
+      <Text size="xs" c="red" mt={2}>
+        This ticket no longer exists in Jira.
+      </Text>
+    </Box>
   )
 }
