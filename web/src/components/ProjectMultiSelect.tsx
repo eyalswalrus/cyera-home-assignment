@@ -1,18 +1,16 @@
 import { MultiSelect } from '@mantine/core'
 import { useState } from 'react'
-import { type Project, type ProjectSource, useProjectOptions } from '../api/hooks'
+import { type Project, useProjectOptions } from '../api/hooks'
 
 const projectLabel = (p: Project) => `${p.name} (${p.key})`
 
-/** Searchable multi-select of Jira projects (searched in Jira). `source` decides which projects are
- * offered: ones the user can create issues in, or ones both the user and the digest bot can. */
+/** Searchable multi-select of the Jira projects the user can create issues in (searched in Jira). */
 export function ProjectMultiSelect({
   value,
   onChange,
   label,
   description,
   error,
-  source = 'jira',
   required = false,
   maxValues = 50,
   knownProjects = [],
@@ -22,14 +20,13 @@ export function ProjectMultiSelect({
   label: string
   description?: string
   error?: string
-  source?: ProjectSource
   required?: boolean
   maxValues?: number
   /** Projects already chosen elsewhere (e.g. saved subscriptions), so their names show at once. */
   knownProjects?: { key: string; name: string }[]
 }) {
   const [search, setSearch] = useState('')
-  const projects = useProjectOptions(search, true, source)
+  const projects = useProjectOptions(search, true)
   // Labels of chosen projects, captured when picked, so they survive later searches.
   const [chosenLabels, setChosenLabels] = useState<Record<string, string>>({})
 

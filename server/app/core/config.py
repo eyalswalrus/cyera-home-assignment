@@ -41,12 +41,7 @@ class Settings(BaseSettings):
     finding_retention_days: int = Field(default=365, ge=1)
 
     # --- NHI Blog Digest -------------------------------------------------------------------------
-    # Optional Jira account that files digest tickets (a dedicated "IdentityHub" bot user),
-    # authenticated with an Atlassian API token. Without it, tickets are filed with a subscriber's
-    # own Jira connection.
-    digest_jira_site_url: str | None = None  # e.g. https://acme.atlassian.net
-    digest_jira_email: str | None = None
-    digest_jira_api_token: SecretStr | None = None
+    # Tickets are filed with a subscriber's own Jira connection (see DESIGN.md section 9).
     digest_blog_url: str = "https://www.oasis.security/blog"
     # Daily run time, HH:MM in UTC. The server also runs a catch-up shortly after it starts.
     digest_daily_at: str = Field(default="09:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -84,10 +79,6 @@ class Settings(BaseSettings):
     @property
     def jira_configured(self) -> bool:
         return bool(self.atlassian_client_id and self.atlassian_client_secret)
-
-    @property
-    def digest_bot_configured(self) -> bool:
-        return bool(self.digest_jira_site_url and self.digest_jira_email and self.digest_jira_api_token)
 
 
 def build_fernet(keys: str) -> MultiFernet:

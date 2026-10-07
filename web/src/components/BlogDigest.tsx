@@ -14,8 +14,8 @@ import { ErrorState } from './ErrorState'
 import { ProjectMultiSelect } from './ProjectMultiSelect'
 
 /** The NHI Blog Digest part of Settings: which projects receive it, and their latest tickets.
- * How the server runs it (bot account, summarizer, schedule) is an administrator's concern and
- * stays in the API and the README. */
+ * How the server runs it (summarizer, schedule) is an administrator's concern and stays in the
+ * API and the README. */
 export function BlogDigestSection() {
   const digest = useDigest()
   if (digest.isPending) return <Skeleton h={120} />
@@ -64,7 +64,6 @@ function SubscriptionEditor({ status }: { status: DigestStatus }) {
     <Stack gap="xs">
       <ProjectMultiSelect
         label="Projects that receive the digest"
-        source="digest"
         maxValues={20}
         value={projects}
         onChange={setProjects}

@@ -114,35 +114,29 @@ Interactive documentation for every endpoint and error is at http://localhost:80
 ## Bonus: NHI Blog Digest
 
 New posts on the [Oasis Security blog](https://www.oasis.security/blog) are summarized and filed
-as Jira tickets in the projects users choose under **Settings → NHI Blog Digest**. It works as soon
-as Jira is connected; two optional settings improve it:
+as Jira tickets in the projects users choose under **Settings → NHI Blog Digest**. Tickets are
+filed with the subscriber's own Jira connection, so it works as soon as Jira is connected.
 
-- **Who files the tickets.** By default, the subscriber's own Jira connection, and tickets say so.
-  To file them as an "IdentityHub" bot instead: create a dedicated Atlassian account (Jira's free
-  plan allows 10 users), give it *Create Issues* in the projects that may receive the digest,
-  create an [API token](https://id.atlassian.com/manage-profile/security/api-tokens) for it, and set
-  `DIGEST_JIRA_SITE_URL`, `DIGEST_JIRA_EMAIL` and `DIGEST_JIRA_API_TOKEN` in `.env`.
-- **Who writes the summaries** (automatic, first available wins):
-  - **Claude:** set `ANTHROPIC_API_KEY`.
-  - **Free local model:** start Ollama (downloads ~2 GB on first run). With the app in Docker:
+**Who writes the summaries** (automatic, first available wins):
+- **Claude:** set `ANTHROPIC_API_KEY`.
+- **Free local model:** start Ollama (downloads ~2 GB on first run). With the app in Docker:
 
-    ```bash
-    docker compose --profile llm up -d --build
-    ```
+  ```bash
+  docker compose --profile llm up -d --build
+  ```
 
-    Or just the model, for a server you run yourself:
+  Or just the model, for a server you run yourself:
 
-    ```bash
-    docker compose --profile llm up -d ollama
-    ```
+  ```bash
+  docker compose --profile llm up -d ollama
+  ```
 
-  - **Nothing:** a built-in extractive summary is used, and tickets say so.
+- **Nothing:** a built-in extractive summary is used, and tickets say so.
 
 The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`, starting at a random point in the following
-`DIGEST_JITTER_MINUTES`, default 30) and once shortly after startup; **Run now**
-in Settings runs it on demand. Each post is summarized once and stored. A new subscription receives
-posts published after subscribing; to see a ticket right away, tick **"Also send the latest blog
-post … now"** when adding the project.
+`DIGEST_JITTER_MINUTES`, default 30) and once shortly after startup. Each post is summarized once
+and stored. A new subscription receives posts published after subscribing; to see a ticket right
+away, click **Send latest post** next to the project.
 
 ## Architecture
 
@@ -155,7 +149,7 @@ web/      React + Vite + TypeScript SPA - UI only, talks to /api
 server/   FastAPI backend
   app/api/       HTTP layer: request validation → service call → response
   app/services/  business logic: findings, Jira connection, API keys, blog digest
-  app/jira/      Jira Cloud client (user OAuth or digest bot), ADF, error translation
+  app/jira/      Jira Cloud client (user OAuth), ADF, error translation
   app/digest/    blog reader and summarizers (Claude, Ollama, extractive)
   app/db/        SQLAlchemy models, session, encryption-key rotation
   app/schemas/   request/response contracts shared by the UI and REST API

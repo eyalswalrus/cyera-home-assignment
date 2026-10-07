@@ -279,23 +279,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/digest/projects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Projects you and the digest bot can both create issues in */
-        get: operations["eligible_projects_api_digest_projects_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/digest/subscriptions": {
         parameters: {
             query?: never;
@@ -559,20 +542,10 @@ export interface components {
              */
             configured: boolean;
             /**
-             * Filed By
-             * @description Who files the tickets: the digest bot account, or (no bot configured) a subscriber's own Jira connection
-             * @enum {string}
-             */
-            filed_by: "bot" | "subscriber";
-            /**
              * Unavailable Reason
              * @description Why the user can't manage subscriptions right now
              */
             unavailable_reason: string | null;
-            /** Bot Account */
-            bot_account: string | null;
-            /** Site Url */
-            site_url: string | null;
             /** Summarizer */
             summarizer: string | null;
             /**
@@ -656,8 +629,6 @@ export interface components {
             status: string;
             /** Jira Configured */
             jira_configured: boolean;
-            /** Digest Bot Configured */
-            digest_bot_configured: boolean;
         };
         /** LastRunOut */
         LastRunOut: {
@@ -1377,37 +1348,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DigestStatus"];
-                };
-            };
-        };
-    };
-    eligible_projects_api_digest_projects_get: {
-        parameters: {
-            query?: {
-                query?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Project"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

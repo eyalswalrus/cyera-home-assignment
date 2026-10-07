@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from httpx import ASGITransport, AsyncClient
 
-from app.jira.client import BotConnection, quota_guard, search_projects
+from app.jira.client import ActiveConnection, quota_guard, search_projects
 from app.services.digest import planned_run_at
 
 from helpers import JIRA_API, connect, sign_up_and_login
@@ -96,7 +96,7 @@ async def test_exhausted_global_quota_pauses_all_jira_calls(connected, atlassian
     before = len(atlassian.jira.calls)
     assert (await connected.get("/api/jira/projects")).status_code == 429
     assert len(atlassian.jira.calls) == before
-    other_site = BotConnection("https://globex.atlassian.net", "bot@example.com", "token")
+    other_site = ActiveConnection("cloud-b", "https://globex.atlassian.net", "token-b")
     try:
         await search_projects(other_site, None, 10)
         raise AssertionError("expected the quota guard to refuse")
@@ -111,8 +111,8 @@ async def test_exhausted_tenant_quota_pauses_only_that_site(connected, atlassian
     assert (await post_finding(connected)).status_code == 429
     assert (await connected.get("/api/jira/projects")).status_code == 429
 
-    atlassian.jira.get("https://globex.atlassian.net/rest/api/3/project/search", json=PROJECTS)
-    other_site = BotConnection("https://globex.atlassian.net", "bot@example.com", "token")
+    atlassian.jira.get("https://api.atlassian.com/ex/jira/cloud-b/rest/api/3/project/search", json=PROJECTS)
+    other_site = ActiveConnection("cloud-b", "https://globex.atlassian.net", "token-b")
     assert await search_projects(other_site, None, 10) == PROJECTS["values"]
     quota_guard.clear()
 

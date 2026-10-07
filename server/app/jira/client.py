@@ -1,4 +1,4 @@
-"""Jira Cloud REST calls on behalf of a user (or the digest bot), via atlassian-python-api.
+"""Jira Cloud REST calls on behalf of a user, via atlassian-python-api.
 
 The library is synchronous (requests), so calls run in FastAPI's threadpool to avoid blocking the
 event loop. Every call uses the *user's own* OAuth token, so Jira enforces that user's
@@ -20,7 +20,7 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from atlassian import JiraCloud
@@ -51,19 +51,6 @@ QUOTA_REASONS = {"jira-quota-global-based", "jira-quota-tenant-based"}
 CLIENT_OPTIONS: dict[str, Any] = {"timeout": 15, "retry_with_header": False, "backoff_and_retry": False}
 
 
-class JiraTarget(Protocol):
-    """Something we can call Jira as: a user's OAuth connection or the digest bot account."""
-
-    site_url: str
-
-    @property
-    def identity(self) -> str:
-        """Who Jira sees: per-account caches are keyed by this."""
-        ...
-
-    def client(self) -> JiraCloud: ...
-
-
 @dataclass(frozen=True)
 class ActiveConnection:
     """What's needed to call Jira as a user: their site and a currently valid access token."""
@@ -75,31 +62,11 @@ class ActiveConnection:
 
     @property
     def identity(self) -> str:
+        """Who Jira sees: per-account caches are keyed by this."""
         return f"{self.cloud_id}:{self.account_id or self.access_token}"
 
     def client(self) -> JiraCloud:
         return _watched(build_client(self.cloud_id, self.access_token))
-
-
-@dataclass(frozen=True)
-class BotConnection:
-    """The digest bot: a dedicated Atlassian account using an API token (HTTP basic auth on the
-    site URL). Tickets it creates are reported by that account, e.g. "IdentityHub"."""
-
-    site_url: str
-    email: str
-    api_token: str
-
-    @property
-    def identity(self) -> str:
-        return f"bot:{self.site_url}:{self.email}"
-
-    def client(self) -> JiraCloud:
-        return _watched(
-            JiraCloud(
-                url=self.site_url.rstrip("/"), username=self.email, password=self.api_token, **CLIENT_OPTIONS
-            )
-        )
 
 
 def build_client(cloud_id: str, access_token: str) -> JiraCloud:
@@ -195,7 +162,7 @@ def _watched(client: JiraCloud) -> JiraCloud:
 # --- Calling Jira -----------------------------------------------------------------------------
 
 
-async def call(conn: JiraTarget, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+async def call(conn: ActiveConnection, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """Run a blocking Jira call in the threadpool, applying the rate-limit policy above, and
     translate failures into JiraErrors. Callers can catch the specific types to add context."""
     site = _site_key(conn.site_url)
@@ -256,12 +223,12 @@ def _rate_limited(site: str, response: Response | None) -> Exception:
     return error
 
 
-async def get_account(conn: JiraTarget) -> dict[str, Any]:
+async def get_account(conn: ActiveConnection) -> dict[str, Any]:
     return await call(conn, conn.client().get_current_user)
 
 
 async def search_projects(
-    conn: JiraTarget, query: str | None, limit: int, keys: list[str] | None = None
+    conn: ActiveConnection, query: str | None, limit: int, keys: list[str] | None = None
 ) -> list[dict[str, Any]]:
     """Projects the account may *create issues in* (not merely browse), optionally only `keys`."""
     client = conn.client()
@@ -277,7 +244,7 @@ async def search_projects(
     return page.get("values", [])
 
 
-async def get_issue_types(conn: JiraTarget, project_key: str) -> list[dict[str, Any]]:
+async def get_issue_types(conn: ActiveConnection, project_key: str) -> list[dict[str, Any]]:
     """Issue types the account can create in the project."""
     client = conn.client()
     page = await call(conn, client.get_create_issue_meta_issue_types, project_key)
@@ -285,18 +252,18 @@ async def get_issue_types(conn: JiraTarget, project_key: str) -> list[dict[str, 
     return page.get("issueTypes", page.get("values", []))
 
 
-async def create_issue(conn: JiraTarget, fields: dict[str, Any]) -> dict[str, Any]:
+async def create_issue(conn: ActiveConnection, fields: dict[str, Any]) -> dict[str, Any]:
     client = conn.client()
     return await call(conn, client.create_issue, data={"fields": fields})
 
 
-async def search_issues(conn: JiraTarget, jql: str, fields: list[str], limit: int) -> list[dict[str, Any]]:
+async def search_issues(conn: ActiveConnection, jql: str, fields: list[str], limit: int) -> list[dict[str, Any]]:
     client = conn.client()
     result = await call(conn, client.enhanced_jql, jql, fields=fields, limit=limit)
     return result.get("issues", [])
 
 
-async def fetch_issues(conn: JiraTarget, keys: list[str], fields: list[str]) -> list[dict[str, Any]]:
+async def fetch_issues(conn: ActiveConnection, keys: list[str], fields: list[str]) -> list[dict[str, Any]]:
     """The issues among `keys` that exist and are visible. Unlike a `key in (...)` JQL query, which
     fails entirely if any key is unknown, bulk fetch reports missing issues individually."""
     if not keys:

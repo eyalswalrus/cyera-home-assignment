@@ -156,8 +156,8 @@ To make this robust in production:
   person's API key acts as that person and breaks when they leave. In production, automated
   sources would use an organization-level service account: a dedicated Atlassian user whose
   permissions cover only the projects scanners may create tickets in. This is the one case where
-  an org-level Jira identity is appropriate, and the blog digest's bot account (section 9) is
-  exactly this pattern.
+  an org-level Jira identity is appropriate, and it is what the blog digest would use in
+  production (section 9).
 
 ---
 
@@ -337,7 +337,7 @@ react-hook-form + zod for forms, React Router.
 |---|---|
 | Sign in / Create account | Registration signs the user straight in. Password rules are shown up front, and server-side rejections appear on the password field. |
 | Report finding | Searchable project picker, the finding form, and the 10 recent tickets for the chosen project side by side (stacked on phones). |
-| Settings | **Jira connection:** connected site and account, reconnect or switch account, disconnect (with confirmation), choose a site, and the outcome of the OAuth redirect. **NHI Blog Digest:** recipient projects, last ticket or error per project, last run, *Run now*. **API keys:** create (permissions locked once created), one-time reveal, notes, revoke. |
+| Settings | **Jira connection:** connected site and account, reconnect or switch account, disconnect (with confirmation), choose a site, and the outcome of the OAuth redirect. **NHI Blog Digest:** recipient projects, latest ticket or problem per project, and *Send latest post* per project. **API keys:** create (permissions locked once created), one-time reveal, notes, revoke. |
 
 ### Interaction decisions
 
@@ -389,7 +389,7 @@ react-hook-form + zod for forms, React Router.
   covered too, which prevents login-CSRF. `/api/v1/*` is exempt because it authenticates with an
   API key header, not cookies.
 - **Rate limiting:** 10 requests per minute per client IP across login, logout and register;
-  60 per minute per API key and 120 per IP on `/api/v1`; 3 per minute on the digest's *Run now*.
+  60 per minute per API key and 120 per IP on `/api/v1`; 3 per minute on the digest's run endpoint and 5 per minute on *Send latest post*.
   All answered with `429` and `Retry-After`.
 - **Security headers:** strict Content-Security-Policy (`script-src 'self'`, no framing),
   `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and `Permissions-Policy`; HSTS only when
@@ -514,53 +514,38 @@ title and the summary, in every project users have subscribed to the digest.
 
 | | Configured by | Where |
 |---|---|---|
-| The **bot account** that files tickets (optional), and the **summarizer** (Claude key / local model) | The deployer, once | `.env`, like the Atlassian OAuth secrets |
+| The **summarizer** (Claude key / local model) and the schedule | The deployer, once | `.env`, like the Atlassian OAuth secrets |
 | **Which projects** receive the digest | Each user, for projects they work in | Settings → NHI Blog Digest |
 
 The automation itself has no UI, as the brief specifies: it is a scheduled job inside the server.
-The Settings section only lets users choose recipient projects and see what happened (last ticket
-per project, errors, last run, and a *Run now* button for demos).
+The Settings section shows a subscriber only what concerns them: their projects, each project's
+latest digest ticket or problem, and a **Send latest post** button per project. How the server
+runs the digest (summarizer, schedule, last run) is in the API (`GET /api/digest`) and the logs,
+not in the UI.
 
-### Who files the tickets
+### Who files the tickets: the subscriber's own Jira connection
 
-| | Bot account configured (`DIGEST_JIRA_*`) | No bot account (fallback) |
-|---|---|---|
-| Ticket created by | The "IdentityHub" bot account | The project's earliest subscriber who still has access, through their own Jira connection |
-| Projects offered | Those both the user and the bot can create issues in | Those the user can create issues in |
-| Ticket footer | "Filed by IdentityHub's NHI Blog Digest" | "…using *Alice*'s Jira connection, because no digest bot account is configured" |
-
-- **Why a bot.** A 3LO OAuth app always acts as the user who authorized it; there is no "app user"
-  to attribute a ticket to (only Forge or Connect apps have one, section 3). So a dedicated
-  Atlassian account named e.g. "IdentityHub" files the tickets, authenticated with an API token set
-  at deploy time.
-- **Why the fallback exists.** A reviewer may not want to create a second Atlassian account and an
-  API token just to try the bonus. Without a bot, the digest still works using the subscriber's
-  existing OAuth connection, says so in the UI and on every ticket, and the bot stays the
-  recommended setup. It is still safe: tickets only go into projects that subscriber can create
-  issues in, re-checked on every run.
-- **Projects are identified by site and key.** Without a bot, subscribers may be connected to
-  different Jira sites, and project keys are only unique within a site, so subscriptions and
-  deliveries record the site (`site_url`) as well as the key.
-- **The bot can't widen anyone's access.**
-  - The picker only offers projects that **both** the user and the bot can create issues in.
-  - Subscribing is re-validated on the server.
-  - At delivery, at least one subscriber must **still** be able to create issues in the project;
-    otherwise nothing is filed and the subscription shows why.
-- **Permissions are granted in Jira and verified by us.** A Jira admin gives the bot *Create Issues*
-  on the digest projects (ideally nothing else; a classic API token carries all of its account's
-  permissions). IdentityHub can't grant Jira permissions; it checks them:
-  - The bot's sign-in is verified (and re-checked every few minutes).
-  - Its per-project access is checked when subscribing and on every run.
-  - Each failure has its own message: wrong site URL, rejected credentials, Jira unreachable, or
-    "the bot can no longer create issues in OPS. Ask a Jira admin to grant it access."
-- **One site.** The bot works on one Jira site; users connected to a different site are told so.
+- **Each ticket is created with a subscriber's own OAuth connection,** the project's earliest
+  subscriber who can still create issues there. Jira enforces a real user's permissions, so the
+  digest can never post where its subscribers couldn't. The ticket footer names whose connection
+  filed it ("Filed by IdentityHub's NHI Blog Digest with *Alice*'s Jira connection").
+- **Access is re-checked:** when subscribing (the picker only offers projects the user can create
+  issues in, and the server re-validates), and on every run. If no subscriber can still create
+  issues in a project, nothing is filed and the subscription shows why.
+- **Projects are identified by site and key.** Subscribers may be connected to different Jira
+  sites, and project keys are only unique within a site, so subscriptions and deliveries record
+  the site (`site_url`) as well as the key.
+- **Why not an app identity here.** A 3LO OAuth app always acts as the user who authorized it;
+  there is no "app user" to file as (only Forge apps can act `asApp()`, section 3). A dedicated
+  bot account would need a second Atlassian user and an API token from every reviewer, so this POC
+  uses the subscribers' connections. Production would not (*In a production setting* below).
 
 ### The run
 
 - **When:** daily at a fixed time, `DIGEST_DAILY_AT` (09:00 UTC by default), so restarts don't
   shift the schedule. A catch-up run also happens shortly after the server starts, in case it was
   down at the scheduled time; it is cheap because filed posts and stored summaries are reused.
-  *Run now* in Settings triggers the same function.
+  `POST /api/digest/run` triggers the same function.
 - **Which posts:** the blog has no RSS feed, and its index pins an older featured post at the top.
   The digest takes the first 8 post links and reads each post's schema.org `BlogPosting` JSON-LD
   for its `datePublished` (the post pages show no visible date of their own); `trafilatura`
@@ -569,10 +554,11 @@ per project, errors, last run, and a *Run now* button for demos).
   - the publish date of the newest post already filed there, or
   - when its current subscriptions began, if that is later. That is the **fresh start**: a new
     subscription receives posts published after subscribing, not the existing backlog.
-  - Optionally, **"Also send the latest blog post now"** (a checkbox when adding projects) moves a
-    new subscription's start back to just before the newest post that already existed, and starts
-    a run immediately: the project gets that one post now, still not the whole backlog. It only
-    applies to projects added in that save, never to existing subscriptions.
+  - **Send latest post** (a button per subscribed project) files the newest post in that project
+    right away, together with any earlier posts still due there, so none is skipped; if it is
+    already there, it says so. It shares the run's lock, so it can't race the scheduled run into
+    filing a post twice. (The API also accepts `send_latest_now` when subscribing, which does the
+    same through a background run.)
 
   Each run files the posts published after the watermark that aren't in the project yet, **oldest
   first**, so a day with two new posts files both. At most 5 per project per run, so a long outage
@@ -618,19 +604,22 @@ ticket text, so a prompt injection in a post could at worst produce a misleading
 
 ### In a production setting
 
-The fallbacks above exist to keep this POC runnable on a laptop with one Atlassian account and no
-paid keys. A production deployment would remove them:
+Filing with a subscriber's connection, a laptop CPU model and extractive summaries keep this POC
+runnable with one Atlassian account and no paid keys. A production deployment would change them:
 
-- **Always a service identity, never a person.** No fallback to a subscriber's account: automation
-  reported as a person is misleading in Jira, and it stops working when that person leaves. The
-  identity would be one of:
+- **File as the app, never as a person.** Automation reported as a person is misleading in Jira,
+  and it stops working when that person leaves or disconnects. The identity would be one of:
   - a **Forge app** calling Jira `asApp()`, the only true app identity: installed by each customer's
     site admin, with its permissions defined by the app's scopes;
   - an **Atlassian service account** from Atlassian Administration, where available on the plan,
     with a scoped API token or OAuth client credentials, granted *Create Issues* only on the
     digest projects.
+
+  The access rules stay: a user may only subscribe projects they can create issues in themselves,
+  re-checked on every run, so the app identity never lets anyone post where they couldn't.
 - **Per customer, not per deployment.** With organizations (section 2), each customer org has its
-  own bot identity and site. Credentials live in a secrets manager with rotation, not in `.env`.
+  own app installation or service account and site. Credentials live in a secrets manager with
+  rotation, not in `.env`.
 - **A hosted model behind the company's AI gateway**, not a laptop CPU model: e.g. Claude directly
   or through Bedrock or Vertex, with the data-handling terms the company already has, plus cost and
   rate controls. If self-hosting is required, a GPU inference service (e.g. vLLM) behind the same
@@ -686,8 +675,9 @@ and a limit on writes to a single issue.
 | Tier 1 (default) | **65,000 points/hour, shared by every customer of the app** | All apps |
 | Tier 2 | A separate quota per customer site, scaling with its size (e.g. Enterprise: 150,000 + 30 per user, up to 500,000/hour) | Apps Atlassian approves after a review |
 
-The bot account used by the digest authenticates with an API token, which is outside the OAuth
-points quota (only the burst limits apply).
+The digest files with subscribers' OAuth connections, so it shares the same quota. (An Atlassian
+service account or API-token user, as production would use, is outside the OAuth points quota;
+only the burst limits apply.)
 
 ### What IdentityHub costs, and where it breaks
 
@@ -760,8 +750,8 @@ everyone. The limit is shared, so one customer's burst becomes every customer's 
 - **API-key rate limits are in memory** (single process), like the login limit.
 - **Jira quota protection is per process** and IdentityHub runs on the shared Tier 1 pool
   (section 11).
-- **Digest fallbacks are POC conveniences:** filing with a subscriber's account, a local CPU model,
-  extractive summaries (section 9, *In a production setting*).
+- **Digest POC conveniences:** filing with a subscriber's account, a local CPU model, extractive
+  summaries (section 9, *In a production setting*).
 - **The digest scheduler runs in-process,** with its last-run status in memory (summaries and
   deliveries are in the database). With several replicas, run it in one (a leader lock, or a
   separate cron job calling the same function).

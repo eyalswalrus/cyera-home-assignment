@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Finding, FindingSource, User
 from app.jira import adf, client
-from app.jira.client import JiraTarget
+from app.jira.client import ActiveConnection
 from app.jira.errors import JiraForbidden, JiraNotFound, JiraProjectUnsupported, JiraValidationError
 from app.schemas.findings import FindingCreate, FindingCreated, Project, RecentTicket
 from app.services.jira_connection import use_jira
@@ -147,7 +147,7 @@ async def recent_findings(db: AsyncSession, user: User, project_key: str) -> lis
     return sorted(tickets.values(), key=lambda t: t.created_at, reverse=True)[:RECENT_LIMIT]
 
 
-async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:
+async def pick_issue_type(conn: ActiveConnection, project_key: str) -> str:
     cache_key = (conn.identity, project_key)
     if (cached := _issue_types.get(cache_key)) is not None:
         return cached
@@ -162,7 +162,7 @@ async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:
     return chosen
 
 
-def forget_issue_type(conn: JiraTarget, project_key: str) -> None:
+def forget_issue_type(conn: ActiveConnection, project_key: str) -> None:
     _issue_types.pop((conn.identity, project_key), None)
 
 
@@ -187,7 +187,7 @@ def _labels(finding: FindingCreate) -> list[str]:
     return labels
 
 
-def browse_url(conn: JiraTarget, issue_key: str) -> str:
+def browse_url(conn: ActiveConnection, issue_key: str) -> str:
     return f"{conn.site_url.rstrip('/')}/browse/{issue_key}"
 
 

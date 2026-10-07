@@ -2,9 +2,9 @@
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.core.rate_limit import RateLimit
 from app.db.models import User
 from app.db.session import get_db
 from app.digest.summarizers import SummaryError, choose_summarizer
-from app.schemas.findings import PROJECT_KEY_PATTERN, Project, ProjectKey
+from app.schemas.findings import PROJECT_KEY_PATTERN, ProjectKey
 from app.services import digest
 from app.services.digest import DigestRuntime
 
@@ -49,12 +49,7 @@ class LastRunOut(BaseModel):
 
 class DigestStatus(BaseModel):
     configured: bool = Field(description="The digest can run (the Jira integration is configured)")
-    filed_by: Literal["bot", "subscriber"] = Field(
-        description="Who files the tickets: the digest bot account, or (no bot configured) a subscriber's own Jira connection"
-    )
     unavailable_reason: str | None = Field(description="Why the user can't manage subscriptions right now")
-    bot_account: str | None
-    site_url: str | None
     summarizer: str | None
     daily_at_utc: str = Field(description="Daily run time, HH:MM UTC")
     jitter_minutes: int = Field(description="Runs start up to this many minutes after daily_at_utc")
@@ -80,10 +75,7 @@ async def get_status(
     last = runtime.last_run
     return DigestStatus(
         configured=settings.jira_configured,
-        filed_by="bot" if settings.digest_bot_configured else "subscriber",
         unavailable_reason=reason,
-        bot_account=runtime.bot_account if settings.digest_bot_configured else None,
-        site_url=settings.digest_jira_site_url if settings.digest_bot_configured else None,
         summarizer=summarizer,
         daily_at_utc=settings.digest_daily_at,
         next_run_at=(runtime.next_run_at or digest.next_run_at(settings.digest_daily_at, datetime.now(UTC)))
@@ -106,16 +98,6 @@ async def get_status(
             for sub, d in subs
         ],
     )
-
-
-@router.get("/projects", summary="Projects you and the digest bot can both create issues in")
-async def eligible_projects(
-    query: Annotated[str | None, Query(max_length=100)] = None,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-    runtime: DigestRuntime = Depends(_runtime),
-) -> list[Project]:
-    return await digest.eligible_projects(db, user, get_settings(), runtime, query)
 
 
 class SubscriptionsIn(BaseModel):

@@ -1,14 +1,10 @@
 """NHI Blog Digest: users subscribe Jira projects; a scheduled job files each new Oasis Security blog
 post, with an AI summary, into every subscribed project.
 
-Tickets are created by a dedicated bot account when one is configured (so they read as coming
-from IdentityHub, not from whoever subscribed); otherwise by the project's earliest subscriber who
-still has access, with their own Jira connection. Two rules keep the bot from widening anyone's
-access:
-
-* A project can only be subscribed if the user *and* the bot can create issues in it.
-* At delivery time, at least one subscriber must still be able to create issues there; if nobody
-  can any more, the project gets nothing.
+Tickets are filed with the project's earliest subscriber's own Jira connection, among those who
+can still create issues there (so Jira enforces a real user's permissions, and the ticket says
+whose connection filed it). If nobody subscribed can any more, the project gets nothing. A
+production deployment would file as the app instead; see DESIGN.md section 9.
 
 What gets filed: each project has a watermark, the newest post already filed there, or (fresh
 start) when its current subscriptions began. Every run files the recent posts published after the
@@ -19,7 +15,6 @@ once and stored; every project and every later run reuses that summary.
 import asyncio
 import logging
 import random
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
@@ -34,16 +29,12 @@ from app.db.session import session_scope
 from app.digest.blog import BlogError, BlogPost, fetch_recent_posts
 from app.digest.summarizers import Summarizer, SummaryError, choose_summarizer
 from app.jira import adf, client
-from app.jira.client import BotConnection, JiraTarget
+from app.jira.client import ActiveConnection
 from app.jira.errors import (
     JiraError,
-    JiraForbidden,
-    JiraNotFound,
     JiraReauthRequired,
-    JiraUnavailable,
     JiraValidationError,
 )
-from app.schemas.findings import Project
 from app.services.findings import APP_LABEL, browse_url, forget_issue_type, pick_issue_type
 from app.services.jira_connection import get_connection, use_jira
 
@@ -51,7 +42,6 @@ log = logging.getLogger(__name__)
 
 DIGEST_LABEL = "nhi-blog-digest"
 MAX_SUBSCRIPTIONS = 20
-BOT_CHECK_TTL_SECONDS = 300
 MAX_TITLE = 255
 # Catch-up bound: after a long outage, a project gets at most this many digests in one run.
 MAX_POSTS_PER_PROJECT_PER_RUN = 5
@@ -105,12 +95,9 @@ class LastRun:
 
 @dataclass
 class DigestRuntime:
-    """In-process state: the bot's health (re-checked every few minutes) and the last run."""
+    """In-process state: the run lock, the last run and the next planned one."""
 
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    bot_account: str | None = None
-    bot_error: str | None = None
-    bot_checked_at: float = 0.0
     last_run: LastRun | None = None
     next_run_at: datetime | None = None  # the scheduler's planned time, jitter included
     # Set when subscriptions change during a run (which has already read them): run once more.
@@ -120,41 +107,6 @@ class DigestRuntime:
     @property
     def running(self) -> bool:
         return self.lock.locked()
-
-
-def bot_connection(settings: Settings) -> BotConnection | None:
-    if not settings.digest_bot_configured:
-        return None
-    assert settings.digest_jira_site_url and settings.digest_jira_email and settings.digest_jira_api_token
-    return BotConnection(
-        settings.digest_jira_site_url, settings.digest_jira_email, settings.digest_jira_api_token.get_secret_value()
-    )
-
-
-async def check_bot(settings: Settings, runtime: DigestRuntime, *, force: bool = False) -> None:
-    """Verify the bot credentials (cached for a few minutes) and remember who the bot is."""
-    bot = bot_connection(settings)
-    if bot is None or (not force and time.monotonic() - runtime.bot_checked_at < BOT_CHECK_TTL_SECONDS):
-        return
-    try:
-        account = await client.get_account(bot)
-        runtime.bot_account, runtime.bot_error = account.get("displayName") or settings.digest_jira_email, None
-    except JiraError as exc:
-        runtime.bot_error = _bot_error_message(settings, bot, exc)
-        log.warning(runtime.bot_error)
-    runtime.bot_checked_at = time.monotonic()
-
-
-def _bot_error_message(settings: Settings, bot: BotConnection, exc: JiraError) -> str:
-    bot_account = f"the digest bot account ({settings.digest_jira_email})"
-    who = bot_account[0].upper() + bot_account[1:]
-    if isinstance(exc, JiraNotFound):
-        return f"{who} couldn't find a Jira site at {bot.site_url}. Check DIGEST_JIRA_SITE_URL."
-    if isinstance(exc, (JiraReauthRequired, JiraForbidden)):
-        return f"Jira rejected the credentials of {bot_account}. Check DIGEST_JIRA_EMAIL and DIGEST_JIRA_API_TOKEN."
-    if isinstance(exc, JiraUnavailable):
-        return f"{who} couldn't reach {bot.site_url}. Jira may be down; this is retried automatically."
-    return f"{who} couldn't sign in to {bot.site_url}: {exc.message}"
 
 
 # --- What a user can do -----------------------------------------------------------------------
@@ -169,36 +121,12 @@ async def unavailable_reason(db: AsyncSession, user: User, settings: Settings, r
     """Why this user can't manage digest subscriptions right now, or None if they can."""
     if not settings.jira_configured:
         return "The Jira integration isn't configured on this server, so the blog digest can't file tickets."
-    bot = bot_connection(settings)
-    if bot is not None:
-        await check_bot(settings, runtime)
-        if runtime.bot_error:
-            return runtime.bot_error
     try:
-        async with use_jira(db, user) as conn:
-            if bot is not None and site_of(conn.site_url) != site_of(bot.site_url):
-                return (
-                    f"The digest bot posts to {bot.site_url}, but your Jira connection is to {conn.site_url}. "
-                    "Connect the same Jira site to subscribe."
-                )
+        async with use_jira(db, user):
+            pass
     except JiraError as exc:
         return exc.message
     return None
-
-
-async def eligible_projects(
-    db: AsyncSession, user: User, settings: Settings, runtime: DigestRuntime, query: str | None
-) -> list[Project]:
-    """Projects the user can create issues in, and (when a bot files the tickets) the bot too."""
-    if reason := await unavailable_reason(db, user, settings, runtime):
-        raise DigestUnavailable(reason)
-    async with use_jira(db, user) as conn:
-        mine = await client.search_projects(conn, query, 50)
-    bot = bot_connection(settings)
-    if bot is not None and mine:
-        bots = {p["key"] for p in await client.search_projects(bot, None, 50, keys=[p["key"] for p in mine])}
-        mine = [p for p in mine if p["key"] in bots]
-    return [Project(id=p["id"], key=p["key"], name=p["name"]) for p in mine]
 
 
 async def set_subscriptions(
@@ -220,16 +148,8 @@ async def set_subscriptions(
         async with use_jira(db, user) as conn:
             site = site_of(conn.site_url)
             mine = {p["key"]: p["name"] for p in await client.search_projects(conn, None, 50, keys=project_keys)}
-        bot = bot_connection(settings)
-        bots = {p["key"] for p in await client.search_projects(bot, None, 50, keys=project_keys)} if bot else None
-        problems = []
-        for key in project_keys:
-            if key not in mine:
-                problems.append(f"you can't create issues in {key}")
-            elif bots is not None and key not in bots:
-                problems.append(f"the IdentityHub bot can't create issues in {key} (a Jira admin can grant it access)")
-        if problems:
-            raise DigestProjectsNotEligible("Can't subscribe: " + "; ".join(problems) + ".")
+        if missing := [key for key in project_keys if key not in mine]:
+            raise DigestProjectsNotEligible(f"Can't subscribe: you can't create issues in {', '.join(missing)}.")
 
     existing = {s.project_key for s in await db.scalars(select(DigestSubscription).where(DigestSubscription.user_id == user.id))}
     await db.execute(
@@ -312,7 +232,7 @@ async def send_latest(
                 await db.commit()
                 raise DigestFilingFailed(sub.last_error or f"The digest can't be filed in {project_key}.")
             stored, summary_errors = await _summaries(db, settings, due)
-            error = await _deliver(db, bot_connection(settings), target, due, stored, summary_errors, sub, filed)
+            error = await _deliver(db, target, due, stored, summary_errors, sub, filed)
             sub.last_error = error
             await db.commit()
             if error:
@@ -356,11 +276,6 @@ async def run_digest(settings: Settings, runtime: DigestRuntime) -> LastRun:
 async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
     if not settings.jira_configured:
         return LastRun(finished_at=datetime.now(UTC), outcome="disabled")
-    bot = bot_connection(settings)
-    if bot is not None:
-        await check_bot(settings, runtime, force=True)
-        if runtime.bot_error:
-            return LastRun(finished_at=datetime.now(UTC), outcome="failed", error=runtime.bot_error)
 
     posts = await fetch_recent_posts(settings.digest_blog_url)  # oldest first
     newest = posts[-1]
@@ -396,7 +311,7 @@ async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
             if not entitled:
                 problems.append(project_key)
                 continue
-            error = await _deliver(db, bot, target, due, stored, summary_errors, entitled[0], filed)
+            error = await _deliver(db, target, due, stored, summary_errors, entitled[0], filed)
             # Subscribers who lost access keep their own message; the rest get this run's outcome.
             for sub in entitled:
                 sub.last_error = error
@@ -410,23 +325,17 @@ async def _run(settings: Settings, runtime: DigestRuntime) -> LastRun:
 
 async def _deliver(
     db: AsyncSession,
-    bot: BotConnection | None,
     target: Target,
     due: list[BlogPost],
     stored: dict[str, DigestPost],
     summary_errors: dict[str, str],
-    first_subscriber: DigestSubscription,
+    filer_sub: DigestSubscription,
     filed: list[str],
 ) -> str | None:
-    """File `due` posts (oldest first) in one project; returns the error that stopped it, if any.
-
-    The bot files when configured. Otherwise the project's earliest subscriber who still has
-    access files with their own Jira connection (the no-bot fallback).
-    """
+    """File `due` posts (oldest first) in one project with `filer_sub`'s user's Jira connection;
+    returns the error that stopped it, if any."""
     _, project_key = target
-    if bot is not None:
-        return await _file_posts(db, bot, None, None, target, due, stored, summary_errors, filed)
-    user = await db.get(User, first_subscriber.user_id)
+    user = await db.get(User, filer_sub.user_id)
     assert user is not None
     connection = await get_connection(db, user)
     filer_name = (connection.account_name if connection else None) or user.email
@@ -439,9 +348,9 @@ async def _deliver(
 
 async def _file_posts(
     db: AsyncSession,
-    jira: JiraTarget,
-    filer: User | None,
-    filer_name: str | None,
+    jira: ActiveConnection,
+    filer: User,
+    filer_name: str,
     target: Target,
     due: list[BlogPost],
     stored: dict[str, DigestPost],
@@ -456,8 +365,6 @@ async def _file_posts(
         try:
             await _file_ticket(db, jira, filer, filer_name, target, digest_post)
         except JiraError as exc:
-            if filer is None and isinstance(exc, (JiraForbidden, JiraNotFound)):
-                return f"The IdentityHub bot can no longer create issues in {project_key}. Ask a Jira admin to grant it access."
             return f"Couldn't file the digest in {project_key}: {exc.message}"
         filed.append(project_key)
     return None
@@ -552,17 +459,13 @@ async def _entitled_subscribers(
 
 
 async def _file_ticket(
-    db: AsyncSession, jira: JiraTarget, filer: User | None, filer_name: str | None, target: Target, post: DigestPost
+    db: AsyncSession, jira: ActiveConnection, filer: User, filer_name: str, target: Target, post: DigestPost
 ) -> None:
     site_url, project_key = target
     title = f"NHI Blog Digest: {post.title}"
     if len(title) > MAX_TITLE:
         title = title[: MAX_TITLE - 1] + "…"
-    filed_by = (
-        "Filed by IdentityHub's NHI Blog Digest"
-        if filer is None
-        else f"Filed by IdentityHub's NHI Blog Digest using {filer_name}'s Jira connection, because no digest bot account is configured"
-    )
+    filed_by = f"Filed by IdentityHub's NHI Blog Digest with {filer_name}'s Jira connection"
     description = adf.document(
         *adf.plain_paragraphs(post.summary),
         adf.paragraph(adf.text("Source: ", "strong"), adf.link(post.url, post.url)),
@@ -590,7 +493,7 @@ async def _file_ticket(
             project_key=project_key,
             issue_key=issue["key"],
             issue_url=browse_url(jira, issue["key"]),
-            filed_by_user_id=filer.id if filer else None,
+            filed_by_user_id=filer.id,
         )
     )
     await db.commit()  # recorded per ticket, so a crash later in the run can't cause a duplicate

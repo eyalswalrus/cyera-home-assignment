@@ -44,12 +44,10 @@ export const handlers = [
   http.get('*/api/digest', () =>
     HttpResponse.json({
       configured: false,
-      filed_by: 'subscriber',
       unavailable_reason: 'not set up',
-      bot_account: null,
-      site_url: null,
       summarizer: null,
       daily_at_utc: '09:00',
+      jitter_minutes: 30,
       next_run_at: null,
       running: false,
       last_run: null,

@@ -739,65 +739,6 @@
         ]
       }
     },
-    "/api/digest/projects": {
-      "get": {
-        "tags": [
-          "blog digest"
-        ],
-        "summary": "Projects you and the digest bot can both create issues in",
-        "operationId": "eligible_projects_api_digest_projects_get",
-        "security": [
-          {
-            "APIKeyCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "query",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "maxLength": 100
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Query"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Project"
-                  },
-                  "title": "Response Eligible Projects Api Digest Projects Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/digest/subscriptions": {
       "put": {
         "tags": [
@@ -1395,15 +1336,6 @@
             "title": "Configured",
             "description": "The digest can run (the Jira integration is configured)"
           },
-          "filed_by": {
-            "type": "string",
-            "enum": [
-              "bot",
-              "subscriber"
-            ],
-            "title": "Filed By",
-            "description": "Who files the tickets: the digest bot account, or (no bot configured) a subscriber's own Jira connection"
-          },
           "unavailable_reason": {
             "anyOf": [
               {
@@ -1415,28 +1347,6 @@
             ],
             "title": "Unavailable Reason",
             "description": "Why the user can't manage subscriptions right now"
-          },
-          "bot_account": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bot Account"
-          },
-          "site_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Site Url"
           },
           "summarizer": {
             "anyOf": [
@@ -1496,10 +1406,7 @@
         "type": "object",
         "required": [
           "configured",
-          "filed_by",
           "unavailable_reason",
-          "bot_account",
-          "site_url",
           "summarizer",
           "daily_at_utc",
           "jitter_minutes",
@@ -1664,17 +1571,12 @@
           "jira_configured": {
             "type": "boolean",
             "title": "Jira Configured"
-          },
-          "digest_bot_configured": {
-            "type": "boolean",
-            "title": "Digest Bot Configured"
           }
         },
         "type": "object",
         "required": [
           "status",
-          "jira_configured",
-          "digest_bot_configured"
+          "jira_configured"
         ],
         "title": "HealthResponse"
       },

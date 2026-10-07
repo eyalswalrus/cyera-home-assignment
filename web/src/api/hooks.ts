@@ -25,7 +25,6 @@ export const keys = {
   recent: (projectKey: string) => ['findings', 'recent', projectKey] as const,
   apiKeys: ['api-keys'] as const,
   digest: ['digest'] as const,
-  digestProjects: (query: string) => ['digest', 'projects', query] as const,
 }
 
 // --- Session ---------------------------------------------------------------------------------
@@ -116,17 +115,11 @@ export function useDisconnectJira() {
 
 // --- Projects and findings -------------------------------------------------------------------
 
-/** Where a project picker gets its options: projects the user can create issues in, or (for the
- * blog digest) those both the user and the digest bot can create issues in. */
-export type ProjectSource = 'jira' | 'digest'
-
-export function useProjects(query: string, enabled: boolean, source: ProjectSource = 'jira') {
+/** Projects the user can create issues in. */
+export function useProjects(query: string, enabled: boolean) {
   return useQuery({
-    queryKey: source === 'jira' ? keys.projects(query) : keys.digestProjects(query),
-    queryFn: () =>
-      source === 'jira'
-        ? call(api.GET('/api/jira/projects', { params: { query: { query: query || undefined } } }))
-        : call(api.GET('/api/digest/projects', { params: { query: { query: query || undefined } } })),
+    queryKey: keys.projects(query),
+    queryFn: () => call(api.GET('/api/jira/projects', { params: { query: { query: query || undefined } } })),
     enabled,
     staleTime: 60_000,
   })
@@ -134,10 +127,10 @@ export function useProjects(query: string, enabled: boolean, source: ProjectSour
 
 /** Options for a project picker: the first page of projects (loaded once, so typing filters them
  * instantly) merged with Jira's server-side search results (for sites with many projects). */
-export function useProjectOptions(search: string, enabled: boolean, source: ProjectSource = 'jira') {
+export function useProjectOptions(search: string, enabled: boolean) {
   const [query] = useDebouncedValue(search.trim(), 250)
-  const firstPage = useProjects('', enabled, source)
-  const searched = useProjects(query, enabled && query !== '', source)
+  const firstPage = useProjects('', enabled)
+  const searched = useProjects(query, enabled && query !== '')
   const merged = new Map<string, Project>()
   for (const p of [...(firstPage.data ?? []), ...(query ? (searched.data ?? []) : [])]) merged.set(p.key, p)
   return {

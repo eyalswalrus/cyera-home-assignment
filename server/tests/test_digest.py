@@ -1,11 +1,9 @@
-"""NHI Blog Digest: subscriptions, the bot, the scheduled run and the summarizers.
+"""NHI Blog Digest: subscriptions, the scheduled run, "send latest" and the summarizers.
 
 The blog, Claude and Ollama are mocked with respx (the app runs on httpx2, aliased as httpx, so the
-real Anthropic and Ollama clients are exercised); Jira (users' OAuth and the bot's API token) with
-`responses`.
+real Anthropic and Ollama clients are exercised); Jira with `responses`.
 """
 
-import base64
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -18,8 +16,6 @@ from sqlalchemy import func, select, update
 from app.db.models import DigestDelivery, DigestPost, DigestSubscription
 from helpers import JIRA_API, connect, csrf, sign_up_and_login
 
-BOT_SITE = "https://acme.atlassian.net"  # same site as the users' OAuth connection (SITE_A)
-BOT_API = f"{BOT_SITE}/rest/api/3"
 BLOG = "https://blog.test/blog"
 PROJECTS = [{"id": "1", "key": "SEC", "name": "Security"}, {"id": "2", "key": "PLAT", "name": "Platform"}, {"id": "3", "key": "OPS", "name": "Operations"}]
 
@@ -40,9 +36,6 @@ BLOG_INDEX = '<a href="/blog/featured-older">F</a><a href="/blog/newest">N</a><a
 def digest_env(monkeypatch):
     from app.core.config import get_settings
 
-    monkeypatch.setenv("DIGEST_JIRA_SITE_URL", BOT_SITE)
-    monkeypatch.setenv("DIGEST_JIRA_EMAIL", "identityhub-bot@acme.test")
-    monkeypatch.setenv("DIGEST_JIRA_API_TOKEN", "bot-token")
     monkeypatch.setenv("DIGEST_BLOG_URL", BLOG)
     monkeypatch.setenv("LLM_PROVIDER", "extractive")
     get_settings.cache_clear()
@@ -60,13 +53,11 @@ async def app(digest_env):
 
 @pytest.fixture
 def jira(atlassian):
-    """User OAuth Jira + bot Jira + blog, all mocked."""
+    """The users' Jira (OAuth) and the blog, mocked."""
     j = atlassian.jira
     j.get(f"{JIRA_API}/project/search", json={"values": PROJECTS})  # the user can create in all three
-    j.get(f"{BOT_API}/myself", json={"accountId": "bot", "displayName": "IdentityHub"})
-    j.get(f"{BOT_API}/project/search", json={"values": [PROJECTS[0], PROJECTS[2]]})  # the bot: SEC and OPS
-    j.get(re.compile(rf"{re.escape(BOT_API)}/issue/createmeta/\w+/issuetypes"), json={"issueTypes": [{"id": "3", "name": "Task"}]})
-    j.post(f"{BOT_API}/issue", json={"id": "1", "key": "SEC-42"}, status=201)
+    j.get(re.compile(rf"{re.escape(JIRA_API)}/issue/createmeta/\w+/issuetypes"), json={"issueTypes": [{"id": "3", "name": "Task"}]})
+    j.post(f"{JIRA_API}/issue", json={"id": "1", "key": "SEC-42"}, status=201)
     oauth = atlassian.oauth
     oauth.get(BLOG).respond(200, text=BLOG_INDEX)
     oauth.get(f"{BLOG}/featured-older").respond(200, text=post_html("Older featured post", days_ago(20), "Old."))
@@ -100,8 +91,8 @@ async def subscribe(client, keys):
     return await client.put("/api/digest/subscriptions", json={"project_keys": keys}, headers=await csrf(client))
 
 
-def bot_issue_requests(jira):
-    return [c.request for c in jira.jira.calls if c.request.method == "POST" and c.request.url.startswith(BOT_API)]
+def issue_requests(jira):
+    return [c.request for c in jira.jira.calls if c.request.method == "POST" and c.request.url == f"{JIRA_API}/issue"]
 
 
 # --- Availability and subscriptions -----------------------------------------------------------
@@ -111,7 +102,7 @@ async def test_not_configured_without_jira(client, atlassian, monkeypatch):
     from app.core.config import get_settings
 
     await connected_user(client)
-    for name in ("ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET", "DIGEST_JIRA_SITE_URL", "DIGEST_JIRA_EMAIL", "DIGEST_JIRA_API_TOKEN"):
+    for name in ("ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"):
         monkeypatch.delenv(name)
     get_settings.cache_clear()
     status = (await client.get("/api/digest")).json()
@@ -119,49 +110,20 @@ async def test_not_configured_without_jira(client, atlassian, monkeypatch):
     assert "Jira integration isn't configured" in status["unavailable_reason"]
 
 
-# --- Without a bot account: filed with a subscriber's own Jira connection ----------------------
+# --- Who files ---------------------------------------------------------------------------------
 
 
-@pytest.fixture
-def no_bot(monkeypatch):
-    from app.core.config import get_settings
-
-    for name in ("DIGEST_JIRA_SITE_URL", "DIGEST_JIRA_EMAIL", "DIGEST_JIRA_API_TOKEN"):
-        monkeypatch.delenv(name)
-    get_settings.cache_clear()
-
-
-@pytest.fixture
-def user_jira_writes(jira):
-    jira.jira.get(re.compile(rf"{re.escape(JIRA_API)}/issue/createmeta/\w+/issuetypes"), json={"issueTypes": [{"id": "3", "name": "Task"}]})
-    jira.jira.post(f"{JIRA_API}/issue", json={"id": "7", "key": "SEC-7"}, status=201)
-    return jira
-
-
-def user_issue_requests(jira):
-    return [c.request for c in jira.jira.calls if c.request.method == "POST" and c.request.url == f"{JIRA_API}/issue"]
-
-
-async def test_without_bot_offers_all_the_users_projects(app, client, jira, no_bot):
-    await connected_user(client)
-    status = (await client.get("/api/digest")).json()
-    assert status["configured"] and status["unavailable_reason"] is None
-    assert status["filed_by"] == "subscriber" and status["bot_account"] is None
-    assert [p["key"] for p in (await client.get("/api/digest/projects")).json()] == ["SEC", "PLAT", "OPS"]
-    assert not any(c.request.url.startswith(BOT_API) for c in jira.jira.calls)  # no bot calls at all
-
-
-async def test_without_bot_files_with_the_subscribers_connection(app, client, user_jira_writes, no_bot, db):
+async def test_files_with_the_subscribers_connection(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
     await backdate_subscriptions(db, 30)
 
     assert (await run(app)).outcome == "filed 2 tickets in SEC"
-    requests = user_issue_requests(user_jira_writes)
-    assert len(requests) == 2 and bot_issue_requests(user_jira_writes) == []
+    requests = issue_requests(jira)
+    assert len(requests) == 2
     assert requests[0].headers["Authorization"] == "Bearer access-1"  # the user's OAuth token
     description = json.dumps(json.loads(requests[-1].body)["fields"]["description"])
-    assert "using Alice Atlassian's Jira connection, because no digest bot account is configured" in description
+    assert "Filed by IdentityHub's NHI Blog Digest with Alice Atlassian's Jira connection" in description
 
     from app.db.models import User
 
@@ -171,7 +133,7 @@ async def test_without_bot_files_with_the_subscribers_connection(app, client, us
     assert {d.site_url for d in deliveries} == {"https://acme.atlassian.net"}
 
 
-async def test_without_bot_one_ticket_per_project_filed_by_the_earliest_subscriber(app, client, user_jira_writes, no_bot, db):
+async def test_one_ticket_per_project_filed_by_the_earliest_subscriber(app, client, jira, db):
     from app.db.models import User
 
     await connected_user(client)
@@ -182,37 +144,24 @@ async def test_without_bot_one_ticket_per_project_filed_by_the_earliest_subscrib
     await backdate_subscriptions(db, 30)
 
     await run(app)
-    assert len(user_issue_requests(user_jira_writes)) == 2  # two posts, once each, not once per subscriber
+    assert len(issue_requests(jira)) == 2  # two posts, once each, not once per subscriber
     alice = await db.scalar(select(User).where(User.email == "alice@example.com"))
     assert {d.filed_by_user_id for d in await db.scalars(select(DigestDelivery))} == {alice.id}
 
 
-async def test_status_names_bot_and_summarizer(app, client, jira):
+async def test_status(app, client, jira):
     await connected_user(client)
     status = (await client.get("/api/digest")).json()
     assert status["configured"] and status["unavailable_reason"] is None
-    assert status["bot_account"] == "IdentityHub"
     assert status["summarizer"] == "extractive summary (no LLM configured)"
-    # The bot authenticates with its own API token, not a user's OAuth token.
-    myself = next(c.request for c in jira.jira.calls if c.request.url == f"{BOT_API}/myself")
-    assert myself.headers["Authorization"] == "Basic " + base64.b64encode(b"identityhub-bot@acme.test:bot-token").decode()
 
 
-async def test_projects_offered_are_those_both_user_and_bot_can_create_in(app, client, jira):
+async def test_cannot_subscribe_where_the_user_lacks_access(app, client, jira):
     await connected_user(client)
-    projects = (await client.get("/api/digest/projects")).json()
-    assert [p["key"] for p in projects] == ["SEC", "OPS"]  # PLAT: the bot has no access
-
-
-async def test_cannot_subscribe_where_the_bot_or_user_lacks_access(app, client, jira):
-    await connected_user(client)
-    response = await subscribe(client, ["SEC", "PLAT"])
-    assert response.status_code == 400
-    assert "the IdentityHub bot can't create issues in PLAT" in response.json()["detail"]
-
     jira.jira.replace("GET", f"{JIRA_API}/project/search", json={"values": [PROJECTS[2]]})  # user: only OPS
     response = await subscribe(client, ["SEC"])
-    assert response.status_code == 400 and "you can't create issues in SEC" in response.json()["detail"]
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Can't subscribe: you can't create issues in SEC."
 
 
 async def test_subscribe_and_unsubscribe(app, client, jira):
@@ -221,32 +170,6 @@ async def test_subscribe_and_unsubscribe(app, client, jira):
     assert [s["project_key"] for s in status["subscriptions"]] == ["OPS", "SEC"]
     status = (await subscribe(client, [])).json()
     assert status["subscriptions"] == []
-
-
-async def test_other_jira_site_is_explained(app, client, jira, monkeypatch):
-    from app.core.config import get_settings
-
-    monkeypatch.setenv("DIGEST_JIRA_SITE_URL", "https://other.atlassian.net")
-    get_settings.cache_clear()
-    jira.jira.get("https://other.atlassian.net/rest/api/3/myself", json={"displayName": "IdentityHub"})
-    await connected_user(client)
-    reason = (await client.get("/api/digest")).json()["unavailable_reason"]
-    assert "posts to https://other.atlassian.net, but your Jira connection is to https://acme.atlassian.net" in reason
-
-
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    [
-        (401, "Jira rejected the credentials of the digest bot account (identityhub-bot@acme.test). Check DIGEST_JIRA_EMAIL and DIGEST_JIRA_API_TOKEN."),
-        (404, "couldn't find a Jira site at https://acme.atlassian.net. Check DIGEST_JIRA_SITE_URL."),
-        (503, "couldn't reach https://acme.atlassian.net. Jira may be down; this is retried automatically."),
-    ],
-)
-async def test_bot_problems_are_explained(app, client, jira, status, expected):
-    jira.jira.replace("GET", f"{BOT_API}/myself", json={"message": "nope"}, status=status)
-    await connected_user(client)
-    reason = (await client.get("/api/digest")).json()["unavailable_reason"]
-    assert expected in reason
 
 
 # --- Running ----------------------------------------------------------------------------------
@@ -260,10 +183,10 @@ async def run(app):
 
 
 def filed_titles(jira) -> list[str]:
-    return [json.loads(r.body)["fields"]["summary"] for r in bot_issue_requests(jira)]
+    return [json.loads(r.body)["fields"]["summary"] for r in issue_requests(jira)]
 
 
-async def test_files_each_post_once_per_project_as_the_bot(app, client, jira, db):
+async def test_files_each_post_once_per_project(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as bob:
@@ -276,8 +199,7 @@ async def test_files_each_post_once_per_project_as_the_bot(app, client, jira, db
     # Catch-up, oldest first, one ticket per post however many people subscribed the project.
     assert filed_titles(jira) == ["NHI Blog Digest: Older featured post", "NHI Blog Digest: When a Worm Steals Your Keys"]
 
-    request = bot_issue_requests(jira)[-1]
-    assert request.headers["Authorization"].startswith("Basic ")  # created by the bot account
+    request = issue_requests(jira)[-1]
     fields = json.loads(request.body)["fields"]
     assert fields["project"] == {"key": "SEC"}
     assert fields["labels"] == ["identityhub", "nhi-blog-digest"]
@@ -288,7 +210,7 @@ async def test_files_each_post_once_per_project_as_the_bot(app, client, jira, db
 
     # Running again files nothing new.
     assert (await run(app)).outcome.startswith("up to date")
-    assert len(bot_issue_requests(jira)) == 2
+    assert len(issue_requests(jira)) == 2
     status = (await client.get("/api/digest")).json()
     assert status["subscriptions"][0]["last_ticket"]["post_title"] == "When a Worm Steals Your Keys"
 
@@ -298,7 +220,7 @@ async def test_fresh_start_only_files_posts_published_after_subscribing(app, cli
     await subscribe(client, ["SEC"])  # just now: both blog posts are older
 
     assert (await run(app)).outcome.startswith("up to date")
-    assert bot_issue_requests(jira) == []
+    assert issue_requests(jira) == []
 
     publish_new_post(jira, age_days=-0.01)  # published after the subscription
     assert (await run(app)).outcome == "filed 1 ticket in SEC"
@@ -328,7 +250,7 @@ async def test_send_latest_now_only_applies_to_newly_added_projects(app, client,
 
     await subscribe_sending_latest(client, ["SEC", "OPS"])
     await app.state.digest.task
-    [request] = bot_issue_requests(jira)
+    [request] = issue_requests(jira)
     assert json.loads(request.body)["fields"]["project"] == {"key": "OPS"}
 
 
@@ -415,21 +337,21 @@ async def test_not_filed_when_no_subscriber_still_has_access(app, client, jira, 
     jira.jira.replace("GET", f"{JIRA_API}/project/search", json={"values": []})  # alice lost access
 
     result = await run(app)
-    assert result.outcome == "nothing filed" and bot_issue_requests(jira) == []
+    assert result.outcome == "nothing filed" and issue_requests(jira) == []
     sub = await db.scalar(select(DigestSubscription).execution_options(populate_existing=True))
     assert sub.last_error == "You can no longer create issues in SEC, so the digest wasn't filed there."
 
 
-async def test_bot_losing_access_is_reported_on_the_subscription(app, client, jira, db):
+async def test_filing_failure_is_reported_on_the_subscription(app, client, jira, db):
     await connected_user(client)
     await subscribe(client, ["SEC"])
     await backdate_subscriptions(db, 30)
-    jira.jira.replace("POST", f"{BOT_API}/issue", json={"errorMessages": ["Forbidden"]}, status=403)
+    jira.jira.replace("POST", f"{JIRA_API}/issue", json={"errorMessages": ["Forbidden"]}, status=403)
 
     result = await run(app)
     assert result.error == "Problems in SEC; see the subscription errors."
     sub = await db.scalar(select(DigestSubscription).execution_options(populate_existing=True))
-    assert "The IdentityHub bot can no longer create issues in SEC" in sub.last_error
+    assert sub.last_error.startswith("Couldn't file the digest in SEC: ")
     assert await db.scalar(select(func.count()).select_from(DigestDelivery)) == 0  # retried next run
 
 
@@ -467,11 +389,11 @@ async def test_send_latest_files_the_newest_post_once(app, client, jira):
     body = response.json()
     assert body["filed"] == 1
     assert body["ticket"]["key"] == "SEC-42" and body["ticket"]["post_title"] == "When a Worm Steals Your Keys"
-    assert len(bot_issue_requests(jira)) == 1
+    assert len(issue_requests(jira)) == 1
 
     again = (await send_latest(client)).json()
     assert again["filed"] == 0 and again["ticket"]["key"] == "SEC-42"
-    assert len(bot_issue_requests(jira)) == 1  # nothing filed twice
+    assert len(issue_requests(jira)) == 1  # nothing filed twice
     assert (await run(app)).outcome.startswith("up to date")  # and the scheduled run agrees
 
 
@@ -480,15 +402,8 @@ async def test_send_latest_also_files_earlier_posts_still_due(app, client, jira,
     await subscribe(client, ["SEC"])
     await backdate_subscriptions(db, 30)
     assert (await send_latest(client)).json()["filed"] == 2
-    titles = [json.loads(r.body)["fields"]["summary"] for r in bot_issue_requests(jira)]
+    titles = [json.loads(r.body)["fields"]["summary"] for r in issue_requests(jira)]
     assert titles == ["NHI Blog Digest: Older featured post", "NHI Blog Digest: When a Worm Steals Your Keys"]
-
-
-async def test_send_latest_without_bot_uses_the_users_connection(app, client, user_jira_writes, no_bot):
-    await connected_user(client)
-    await subscribe(client, ["SEC"])
-    assert (await send_latest(client)).json()["filed"] == 1
-    assert len(user_issue_requests(user_jira_writes)) == 1
 
 
 async def test_send_latest_requires_a_subscription(app, client, jira):

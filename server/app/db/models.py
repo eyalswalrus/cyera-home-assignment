@@ -129,8 +129,8 @@ class Finding(Base):
 class DigestSubscription(Base):
     """A user asking for the NHI Blog Digest to be filed in one Jira project.
 
-    A subscription only counts while its user can still create issues in the project themselves;
-    otherwise the digest bot would let users post into projects they can't access.
+    A subscription only counts while its user can still create issues in the project themselves:
+    the digest is filed with a subscriber's own Jira connection.
     """
 
     __tablename__ = "digest_subscription"
@@ -139,7 +139,7 @@ class DigestSubscription(Base):
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = _user_fk()
     # The Jira site the project lives on (e.g. https://acme.atlassian.net). Project keys are only
-    # unique within a site, and without a bot account subscribers may be on different sites.
+    # unique within a site, and subscribers may be connected to different sites.
     site_url: Mapped[str] = mapped_column(String(255), nullable=False)
     project_key: Mapped[str] = mapped_column(String(32), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -181,7 +181,6 @@ class DigestDelivery(Base):
     project_key: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     issue_key: Mapped[str] = mapped_column(String(64), nullable=False)
     issue_url: Mapped[str] = mapped_column(String(512), nullable=False)
-    # Who filed it: None for the digest bot, otherwise the subscriber whose Jira connection was
-    # used (the fallback when no bot account is configured).
+    # The subscriber whose Jira connection filed it (None if that user was since deleted).
     filed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(GUID, ForeignKey("user.id", ondelete="set null"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)

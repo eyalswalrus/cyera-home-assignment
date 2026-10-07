@@ -7,10 +7,7 @@ import { server } from './server'
 
 const ready: DigestStatus = {
   configured: true,
-  filed_by: 'bot',
   unavailable_reason: null,
-  bot_account: 'IdentityHub',
-  site_url: 'https://acme.atlassian.net',
   summarizer: 'local model llama3.2:3b (Ollama)',
   daily_at_utc: '09:00',
   jitter_minutes: 30,
@@ -38,7 +35,7 @@ const ready: DigestStatus = {
     {
       project_key: 'OPS',
       project_name: 'Operations',
-      last_error: 'The IdentityHub bot can no longer create issues in OPS. Ask a Jira admin to grant it access.',
+      last_error: 'You can no longer create issues in OPS, so the digest wasn’t filed there.',
       last_ticket: null,
     },
   ],
@@ -49,7 +46,7 @@ beforeEach(() => {
 })
 
 describe('NHI Blog Digest settings', () => {
-  it('explains when the server has no digest bot configured', async () => {
+  it('explains when the server has no Jira integration configured', async () => {
     renderApp('/settings')
     expect(await screen.findByText('Not available on this server')).toBeInTheDocument()
   })
@@ -61,9 +58,9 @@ describe('NHI Blog Digest settings', () => {
     const sec = await screen.findByLabelText('Digest for SEC')
     expect(within(sec).getByRole('link', { name: /SEC-42/ })).toHaveAttribute('target', '_blank')
     const ops = screen.getByLabelText('Digest for OPS')
-    expect(within(ops).getByText(/bot can no longer create issues in OPS/)).toBeInTheDocument()
+    expect(within(ops).getByText(/You can no longer create issues in OPS/)).toBeInTheDocument()
     // How the server runs the digest is for administrators, not subscribers.
-    expect(screen.queryByText(/llama3\.2|09:00 UTC|bot account|Last run/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/llama3\.2|09:00 UTC|Last run/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
   })
 
@@ -71,7 +68,7 @@ describe('NHI Blog Digest settings', () => {
     let sent: unknown
     server.use(
       http.get('*/api/digest', () => HttpResponse.json({ ...ready, subscriptions: [] })),
-      http.get('*/api/digest/projects', () => HttpResponse.json([{ id: '1', key: 'SEC', name: 'Security' }])),
+      http.get('*/api/jira/projects', () => HttpResponse.json([{ id: '1', key: 'SEC', name: 'Security' }])),
       http.put('*/api/digest/subscriptions', async ({ request }) => {
         sent = await request.json()
         return HttpResponse.json({ ...ready, subscriptions: [ready.subscriptions[0]] })
