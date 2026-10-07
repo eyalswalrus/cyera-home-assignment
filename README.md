@@ -116,30 +116,67 @@ with `ENVIRONMENT=development` (as in the local development command above).
 
 ## Bonus: NHI Blog Digest
 
-New posts on the [Oasis Security blog](https://www.oasis.security/blog) are summarized and filed
-as Jira tickets in the projects users choose under **Settings → NHI Blog Digest**. Tickets are
-filed with the subscriber's own Jira connection, so it works as soon as Jira is connected.
+Each new post on the [Oasis Security blog](https://www.oasis.security/blog) is summarized and
+filed as a Jira ticket in the projects you choose. It needs **no extra Jira setup**: tickets are
+filed with your own Jira connection (the ticket says so), and only in projects you can create
+issues in.
 
-**Who writes the summaries** (automatic, first available wins):
-- **Claude:** set `ANTHROPIC_API_KEY`.
-- **Free local model:** start Ollama (downloads ~2 GB on first run). With the app in Docker:
+### Try it
 
-  ```bash
-  docker compose --profile llm up -d --build
-  ```
+After the [Quick start](#quick-start) (Jira connected):
 
-  Or just the model, for a server you run yourself:
+1. *Optional, do this first:* pick who writes the summaries (next section). Without any setup a
+   built-in summary is used. Each post is summarized **once and stored**, so a post summarized
+   before you add Claude or the local model keeps its first summary.
+2. Open **Settings** (account menu, top right) → **NHI Blog Digest**.
+3. Under **Projects that receive the digest**, choose one or more projects and click
+   **Save projects**.
+4. Click **Send latest post** next to a project. A notification links to the new ticket (its title is
+   "NHI Blog Digest: *post title*"). It also appears on the **Recent tickets** page.
 
-  ```bash
-  docker compose --profile llm up -d ollama
-  ```
+From then on it runs by itself: daily at 09:00 UTC, plus once shortly after the server starts.
+Each run files posts published since the project last received one, one ticket per post per
+project. A new subscription starts with posts published after subscribing; **Send latest post**
+is how you get one right away.
 
-- **Nothing:** a built-in extractive summary is used, and tickets say so.
+### Who writes the summaries
 
-The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`, starting at a random point in the following
-`DIGEST_JITTER_MINUTES`, default 30) and once shortly after startup. Each post is summarized once
-and stored. A new subscription receives posts published after subscribing; to see a ticket right
-away, click **Send latest post** next to the project.
+Checked in this order on each run; the first one available is used:
+
+| | Setup | Notes |
+|---|---|---|
+| **1. Claude** | Add `ANTHROPIC_API_KEY=sk-ant-...` to `.env`, then `docker compose up -d` | Best summaries; needs an Anthropic API key |
+| **2. Local model** (Ollama, free) | `docker compose --profile llm up -d --build`, then wait for the model download (below) | ~2 GB download once; about a minute per summary on a laptop CPU |
+| **3. Built-in** | Nothing | Picks the post's key sentences; not an LLM, and the ticket says so |
+
+With the local model, wait until the download finishes before step 4. Until then, the built-in
+summary is used. Check that it's ready with:
+
+```bash
+docker compose exec ollama ollama list
+```
+
+It's ready when the list shows `llama3.2:3b`. (`docker compose logs -f ollama` shows the
+download's progress.)
+
+To see which one summarized a post, look at the last line of its ticket, e.g. "Summary: local
+model llama3.2:3b (Ollama)".
+
+**Running the server outside Docker** (local development): start only the model with
+`docker compose --profile llm up -d ollama`. The server finds it at `http://localhost:11434`.
+
+### Optional settings (`.env`)
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | unset | Enables Claude |
+| `LLM_PROVIDER` | `auto` | `auto` (order above), or force one: `anthropic`, `ollama`, `extractive` |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Model the local service downloads and uses |
+| `DIGEST_DAILY_AT` | `09:00` | Daily run time, in UTC |
+| `DIGEST_JITTER_MINUTES` | `30` | Each run starts at a random time up to this long after `DIGEST_DAILY_AT` |
+
+After changing `.env`, apply it with `docker compose up -d`. Add `--profile llm` if you use the
+local model.
 
 ## Architecture
 
