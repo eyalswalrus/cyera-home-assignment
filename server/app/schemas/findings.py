@@ -73,8 +73,12 @@ class FindingCreated(BaseModel):
 class RecentTicket(BaseModel):
     key: str
     summary: str
-    url: str
+    url: str | None = Field(description="Link to the issue; null when it's no longer in Jira")
     created_at: datetime
+    deleted: bool = Field(
+        default=False,
+        description="You created this ticket, but Jira no longer returns it (deleted, moved, or you lost access)",
+    )
 
 
 class Project(BaseModel):

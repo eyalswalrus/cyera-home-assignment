@@ -8,6 +8,8 @@ from sqlalchemy import select
 
 from app.db.models import Finding
 from app.jira import adf
+from httpx import ASGITransport, AsyncClient
+
 from helpers import JIRA_API, connect, csrf, sign_up_and_login
 
 ISSUE_TYPES = {
@@ -209,14 +211,59 @@ async def test_recent_tickets(connected, atlassian):
     response = await connected.get("/api/findings/recent", params={"project_key": "SEC"})
     assert response.status_code == 200
     assert response.json() == [
-        {"key": "SEC-2", "summary": "Exposed key", "url": "https://acme.atlassian.net/browse/SEC-2", "created_at": "2026-10-06T12:34:56.789000Z"},
-        {"key": "SEC-1", "summary": "Stale account", "url": "https://acme.atlassian.net/browse/SEC-1", "created_at": "2026-10-05T08:00:00+03:00"},
+        {"key": "SEC-2", "summary": "Exposed key", "url": "https://acme.atlassian.net/browse/SEC-2", "created_at": "2026-10-06T12:34:56.789000Z", "deleted": False},
+        {"key": "SEC-1", "summary": "Stale account", "url": "https://acme.atlassian.net/browse/SEC-1", "created_at": "2026-10-05T08:00:00+03:00", "deleted": False},
     ]
 
     params = parse_qs(urlparse(last_request(atlassian, "GET", "/search/jql").url).query)
     assert params["jql"] == ['project = "SEC" AND labels = "identityhub" ORDER BY created DESC']
     assert params["maxResults"] == ["10"]
     assert params["fields"] == ["summary,created"]
+
+
+def jira_search_returns(atlassian, issues):
+    atlassian.jira.upsert("GET", f"{JIRA_API}/search/jql", json={"issues": issues})
+
+
+def bulk_fetch_returns(atlassian, issues, missing=()):
+    atlassian.jira.post(
+        f"{JIRA_API}/issue/bulkfetch",
+        json={"issues": issues, "issueErrors": [{"key": k, "errorMessages": ["Issue does not exist"]} for k in missing]},
+    )
+
+
+async def test_own_deleted_ticket_is_flagged_not_dropped(connected, atlassian):
+    assert (await post_finding(connected)).status_code == 201  # SEC-1, recorded locally
+    jira_search_returns(atlassian, [])  # ...then deleted in Jira
+    bulk_fetch_returns(atlassian, [], missing=["SEC-1"])
+
+    [ticket] = (await connected.get("/api/findings/recent", params={"project_key": "SEC"})).json()
+    assert ticket["key"] == "SEC-1" and ticket["deleted"] is True and ticket["url"] is None
+    assert ticket["summary"] == "Stale Service Account: svc-deploy-prod"  # from our own record
+
+    body = json.loads(last_request(atlassian, "POST", "/issue/bulkfetch").body)
+    assert body["issueIdsOrKeys"] == ["SEC-1"]
+
+
+async def test_own_ticket_not_yet_in_search_index_is_shown_normally(connected, atlassian):
+    await post_finding(connected)
+    jira_search_returns(atlassian, [])  # search index hasn't caught up
+    bulk_fetch_returns(atlassian, [{"key": "SEC-1", "fields": {"summary": "Renamed in Jira", "created": "2026-10-06T12:34:56.789+0000"}}])
+
+    [ticket] = (await connected.get("/api/findings/recent", params={"project_key": "SEC"})).json()
+    assert ticket["deleted"] is False and ticket["summary"] == "Renamed in Jira"
+    assert ticket["url"] == "https://acme.atlassian.net/browse/SEC-1"
+
+
+async def test_other_users_deleted_tickets_are_not_shown(connected, atlassian, app):
+    await post_finding(connected)  # alice's ticket
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as bob:
+        await sign_up_and_login(bob, "bob@example.com")
+        await connect(bob)
+        jira_search_returns(atlassian, [])
+        response = await bob.get("/api/findings/recent", params={"project_key": "SEC"})
+    assert response.json() == []
+    assert not any("/issue/bulkfetch" in c.request.url for c in atlassian.jira.calls)  # nothing of bob's to check
 
 
 async def test_recent_tickets_for_unknown_project(connected, atlassian):

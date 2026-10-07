@@ -678,13 +678,22 @@ export interface components {
             key: string;
             /** Summary */
             summary: string;
-            /** Url */
-            url: string;
+            /**
+             * Url
+             * @description Link to the issue; null when it's no longer in Jira
+             */
+            url: string | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Deleted
+             * @description You created this ticket, but Jira no longer returns it (deleted, moved, or you lost access)
+             * @default false
+             */
+            deleted?: boolean;
         };
         /**
          * Scope

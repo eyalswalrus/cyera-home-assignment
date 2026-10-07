@@ -1741,13 +1741,27 @@
             "title": "Summary"
           },
           "url": {
-            "type": "string",
-            "title": "Url"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url",
+            "description": "Link to the issue; null when it's no longer in Jira"
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted",
+            "description": "You created this ticket, but Jira no longer returns it (deleted, moved, or you lost access)",
+            "default": false
           }
         },
         "type": "object",

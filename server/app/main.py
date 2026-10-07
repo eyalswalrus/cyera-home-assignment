@@ -18,6 +18,7 @@ from app.core.rate_limit import build_rate_limiter
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.db.session import close_db, init_db
 from app.jira.oauth import build_oauth
+from app.services import maintenance
 from app.services.digest import DigestRuntime, schedule
 
 
@@ -41,12 +42,14 @@ class SPAStaticFiles(StaticFiles):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     settings = get_settings()
-    scheduler = asyncio.create_task(schedule(settings, app.state.digest)) if settings.jira_configured else None
+    tasks = [asyncio.create_task(maintenance.schedule(settings))]
+    if settings.jira_configured:
+        tasks.append(asyncio.create_task(schedule(settings, app.state.digest)))
     yield
-    if scheduler:
-        scheduler.cancel()
+    for task in tasks:
+        task.cancel()
         with suppress(asyncio.CancelledError):
-            await scheduler
+            await task
     await close_db()
 
 

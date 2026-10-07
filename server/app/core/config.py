@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     atlassian_client_id: str | None = None
     atlassian_client_secret: SecretStr | None = None
 
+    # How long the audit record of each created ticket (the `finding` table) is kept. Jira keeps the
+    # tickets themselves; this only bounds IdentityHub's own copy.
+    finding_retention_days: int = Field(default=365, ge=1)
+
     # --- NHI Blog Digest -------------------------------------------------------------------------
     # Optional Jira account that files digest tickets (a dedicated "IdentityHub" bot user),
     # authenticated with an Atlassian API token. Without it, tickets are filed with a subscriber's

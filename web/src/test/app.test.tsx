@@ -162,6 +162,25 @@ describe('reporting a finding', () => {
   })
 })
 
+describe('recent tickets', () => {
+  it('flags your ticket that was deleted in Jira instead of dropping it', async () => {
+    server.use(
+      http.get('*/api/findings/recent', () =>
+        HttpResponse.json([
+          { key: 'SEC-3', summary: 'Rotated key', url: 'https://acme.atlassian.net/browse/SEC-3', created_at: new Date().toISOString(), deleted: false },
+          { key: 'SEC-1', summary: 'Stale account', url: null, created_at: new Date(Date.now() - 86_400_000).toISOString(), deleted: true },
+        ]),
+      ),
+    )
+    const { user } = renderApp('/')
+    await pickProject(user, 'Security (SEC)')
+    const deleted = await screen.findByLabelText('SEC-1, no longer in Jira')
+    expect(within(deleted).getByText('No longer in Jira')).toBeInTheDocument()
+    expect(within(deleted).queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /SEC-3/ })).toHaveAttribute('href', 'https://acme.atlassian.net/browse/SEC-3')
+  })
+})
+
 describe('toApiError', () => {
   it('maps validation errors to fields', () => {
     const error = toApiError(422, {

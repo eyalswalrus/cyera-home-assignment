@@ -283,8 +283,16 @@ is about 20 lines.
 
 - **Every ticket IdentityHub creates carries the label `identityhub`.** "Recent tickets" is the JQL
   search `project = "<KEY>" AND labels = "identityhub" ORDER BY created DESC`, limited to 10.
-- **Jira is the source of truth:** renamed, moved or deleted issues show correctly, and tickets
-  created through the REST API appear too.
+- **Jira is the source of truth:** renamed issues show their current title, and tickets created
+  through the REST API or by teammates appear too.
+- **Deleted tickets are flagged, not dropped.** A finding silently disappearing is bad for a
+  security tool, so the user's *own* recent tickets that Jira no longer returns stay in the list,
+  greyed out as "No longer in Jira", without a link. Jira can't tell us *why*: deleted, moved to
+  another project, or access lost. They are found by comparing the search with the user's records
+  in the `finding` table, checked with one bulk fetch (`POST /issue/bulkfetch`); a `key in (...)`
+  JQL query would fail outright on the first deleted key. The same check covers a ticket created
+  seconds ago that Jira's search index hasn't caught up with, which is shown normally. Only the
+  user's own records are used, never other tenants'.
 - **It runs as the user,** so it shows only issues they are allowed to see. That includes tickets
   that *other* IdentityHub users created in the same project, which is what "created from this
   app" means. Showing only the user's own tickets would be a one-line change
@@ -293,8 +301,11 @@ is about 20 lines.
   non-editable alternative, indexed issue properties, is only available to Forge and Connect apps.
 - **JQL injection:** the project key is validated against `^[A-Z][A-Z0-9_]{1,19}$` before it is
   placed in the query.
-- A local `finding` table also records every ticket created (who, from the UI or API, which key),
-  as an audit trail independent of Jira.
+- **The `finding` table** records every ticket IdentityHub creates: who, when, from the UI or the
+  API (and with which API key), and which issue. It is the audit trail Jira can't provide (Jira
+  doesn't know a ticket came from IdentityHub, or through which key; if a key leaks, this is how to
+  find what it did), and it powers the deleted-ticket flags above. It is kept for
+  `FINDING_RETENTION_DAYS` (section 10).
 
 ### Jira errors users will actually see
 
@@ -640,6 +651,21 @@ paid keys. A production deployment would remove them:
 - **Referential integrity:** SQLite foreign keys are enabled on every connection, so deleting a
   user cascades to their Jira connection, API keys, findings and digest subscriptions.
 
+### Data retention
+
+A daily job (`app/services/maintenance.py`, shortly after startup and then every 24 hours) deletes
+data IdentityHub no longer needs:
+
+| Data | Kept for | Why |
+|---|---|---|
+| `finding` (audit record of created tickets) | `FINDING_RETENTION_DAYS`, default 365 | A year of audit history is a common baseline for security logs. The tickets themselves live in Jira, under the customer's own retention. |
+| Login sessions | Until they expire (8 hours) | Expired sessions were already rejected; now their rows are removed too. |
+| Revoked and expired API keys | Kept | Their hashes are useless to an attacker, and keeping them lets the UI show the key that is gone. A production version would purge them after a grace period. |
+| Digest posts and deliveries | Kept | They are the "already filed" record that prevents duplicate tickets. They grow by one blog post per few days. |
+
+Production would make retention a per-customer setting (some must keep audit data longer, others
+shorter), log each purge, and support deletion on request (e.g. when a customer offboards).
+
 ---
 
 ## 11. Known limitations and production next steps
@@ -655,7 +681,6 @@ paid keys. A production deployment would remove them:
   production sign-up would respond identically either way and confirm by email.
 - **Rate limits are per IP and in memory** (single process). Production: a shared store (Redis)
   and an additional per-account limit against distributed credential stuffing.
-- **Expired sessions are rejected but not purged;** production would run a periodic cleanup.
 - **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
   while submitting; the API could accept an `Idempotency-Key` header.
 - **API-key rate limits are in memory** (single process), like the login limit.

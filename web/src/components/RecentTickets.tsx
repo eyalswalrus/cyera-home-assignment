@@ -1,6 +1,7 @@
 import { ActionIcon, Alert, Anchor, Badge, Group, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
-import { IconExternalLink, IconRefresh } from '@tabler/icons-react'
-import { type Project, useRecentTickets } from '../api/hooks'
+import { IconExternalLink, IconRefresh, IconTrash } from '@tabler/icons-react'
+import type { ReactNode } from 'react'
+import { type Project, type RecentTicket, useRecentTickets } from '../api/hooks'
 import { formatDateTime, timeAgo } from '../lib/time'
 
 export function RecentTickets({ project }: { project: Project | null }) {
@@ -48,38 +49,75 @@ export function RecentTickets({ project }: { project: Project | null }) {
       ) : (
         <Stack gap={4} component="ul" p={0} m={0} style={{ listStyle: 'none' }}>
           {recent.data.map((ticket) => (
-            <li key={ticket.key}>
-              <Anchor
-                href={ticket.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                underline="never"
-                c="inherit"
-                display="block"
-                p="xs"
-                style={{ borderRadius: 'var(--mantine-radius-sm)' }}
-                className="ticket-row"
-              >
-                {/* The title gets its own line: it's what people scan for. */}
-                <Group gap="xs" wrap="nowrap" justify="space-between">
-                  <Badge variant="light">{ticket.key}</Badge>
-                  <Group gap={6} wrap="nowrap">
-                    <Tooltip label={formatDateTime(ticket.created_at)}>
-                      <Text size="xs" c="dimmed">
-                        {timeAgo(ticket.created_at)}
-                      </Text>
-                    </Tooltip>
-                    <IconExternalLink size={14} aria-label="Opens in a new tab" />
-                  </Group>
-                </Group>
-                <Text size="sm" mt={4} lineClamp={2} title={ticket.summary}>
-                  {ticket.summary}
-                </Text>
-              </Anchor>
-            </li>
+            <li key={ticket.key}>{ticket.deleted ? <DeletedTicket ticket={ticket} /> : <TicketLink ticket={ticket} />}</li>
           ))}
         </Stack>
       )}
     </Stack>
+  )
+}
+
+function TicketHeader({ ticket, children }: { ticket: RecentTicket; children: ReactNode }) {
+  return (
+    <Group gap="xs" wrap="nowrap" justify="space-between">
+      <Badge variant="light" color={ticket.deleted ? 'gray' : undefined}>
+        {ticket.key}
+      </Badge>
+      <Group gap={6} wrap="nowrap">
+        <Tooltip label={formatDateTime(ticket.created_at)}>
+          <Text size="xs" c="dimmed">
+            {timeAgo(ticket.created_at)}
+          </Text>
+        </Tooltip>
+        {children}
+      </Group>
+    </Group>
+  )
+}
+
+function TicketLink({ ticket }: { ticket: RecentTicket }) {
+  return (
+    <Anchor
+      href={ticket.url ?? undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      underline="never"
+      c="inherit"
+      display="block"
+      p="xs"
+      style={{ borderRadius: 'var(--mantine-radius-sm)' }}
+      className="ticket-row"
+    >
+      {/* The title gets its own line: it's what people scan for. */}
+      <TicketHeader ticket={ticket}>
+        <IconExternalLink size={14} aria-label="Opens in a new tab" />
+      </TicketHeader>
+      <Text size="sm" mt={4} lineClamp={2} title={ticket.summary}>
+        {ticket.summary}
+      </Text>
+    </Anchor>
+  )
+}
+
+/** A ticket you created that Jira no longer returns: kept in the list so a finding can't silently
+ * disappear, but without a link, since there is nothing to open. */
+function DeletedTicket({ ticket }: { ticket: RecentTicket }) {
+  return (
+    <div style={{ padding: 'var(--mantine-spacing-xs)' }} aria-label={`${ticket.key}, no longer in Jira`}>
+      <TicketHeader ticket={ticket}>
+        <Tooltip
+          label="You created this ticket, but Jira no longer has it: it was deleted, moved to another project, or you lost access."
+          multiline
+          w={260}
+        >
+          <Badge size="xs" color="gray" variant="outline" leftSection={<IconTrash size={10} />}>
+            No longer in Jira
+          </Badge>
+        </Tooltip>
+      </TicketHeader>
+      <Text size="sm" mt={4} lineClamp={2} c="dimmed" td="line-through" title={ticket.summary}>
+        {ticket.summary}
+      </Text>
+    </div>
   )
 }

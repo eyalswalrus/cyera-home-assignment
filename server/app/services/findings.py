@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Finding, FindingSource, User
@@ -71,11 +72,15 @@ async def create_finding(
 
 
 async def recent_findings(db: AsyncSession, user: User, project_key: str) -> list[RecentTicket]:
-    """The newest tickets IdentityHub created in a project, as visible to this user in Jira.
+    """The newest tickets IdentityHub created in a project.
 
-    Jira is the source of truth, so renamed, moved or deleted issues show up correctly, and tickets
-    created through the REST API are included. `project_key` is validated against
-    PROJECT_KEY_PATTERN before it reaches here, so it can't break out of the JQL string.
+    Jira is the source of truth, so renamed issues show their current title and tickets created
+    through the REST API or by teammates are included. On top of that, the user's *own* tickets that
+    Jira no longer returns are kept in the list, flagged as deleted, so a finding can't silently
+    disappear. Other users' records are never used here (they belong to their own tenant).
+
+    `project_key` is validated against PROJECT_KEY_PATTERN before it reaches here, so it can't break
+    out of the JQL string.
     """
     jql = f'project = "{project_key}" AND labels = "{APP_LABEL}" ORDER BY created DESC'
     async with use_jira(db, user) as conn:
@@ -84,15 +89,36 @@ async def recent_findings(db: AsyncSession, user: User, project_key: str) -> lis
         except JiraValidationError as exc:
             # JQL rejects unknown projects (or ones the user can't see) with a 400.
             raise JiraNotFound(f"Project {project_key} wasn't found, or your Jira account can't access it.") from exc
-    return [
-        RecentTicket(
+
+        # The user's own recent tickets in this project that the search didn't return: either not in
+        # Jira's search index yet (just created), or gone (deleted, moved, access lost).
+        found_keys = {issue["key"] for issue in issues}
+        mine = (
+            await db.scalars(
+                select(Finding)
+                .where(Finding.user_id == user.id, Finding.cloud_id == conn.cloud_id, Finding.project_key == project_key)
+                .order_by(Finding.created_at.desc())
+                .limit(RECENT_LIMIT)
+            )
+        ).all()
+        unmatched = [f for f in mine if f.issue_key not in found_keys]
+        still_there = await client.fetch_issues(conn, [f.issue_key for f in unmatched], ["summary", "created"])
+
+    tickets = {
+        issue["key"]: RecentTicket(
             key=issue["key"],
             summary=issue["fields"]["summary"],
             url=browse_url(conn, issue["key"]),
             created_at=_parse_jira_time(issue["fields"]["created"]),
         )
-        for issue in issues
-    ]
+        for issue in [*issues, *still_there]
+    }
+    for finding in unmatched:
+        if finding.issue_key not in tickets:
+            tickets[finding.issue_key] = RecentTicket(
+                key=finding.issue_key, summary=finding.summary, url=None, created_at=finding.created_at, deleted=True
+            )
+    return sorted(tickets.values(), key=lambda t: t.created_at, reverse=True)[:RECENT_LIMIT]
 
 
 async def pick_issue_type(conn: JiraTarget, project_key: str) -> str:

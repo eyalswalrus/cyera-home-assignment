@@ -142,3 +142,12 @@ async def search_issues(conn: JiraTarget, jql: str, fields: list[str], limit: in
     client = conn.client()
     result = await call(client.enhanced_jql, jql, fields=fields, limit=limit)
     return result.get("issues", [])
+
+
+async def fetch_issues(conn: JiraTarget, keys: list[str], fields: list[str]) -> list[dict[str, Any]]:
+    """The issues among `keys` that exist and are visible. Unlike a `key in (...)` JQL query, which
+    fails entirely if any key is unknown, bulk fetch reports missing issues individually."""
+    if not keys:
+        return []
+    result = await call(conn.client().bulk_fetch_issues, data={"issueIdsOrKeys": keys, "fields": fields})
+    return result.get("issues", [])

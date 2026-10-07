@@ -111,3 +111,35 @@ async def test_undecryptable_token_loads_as_none_and_survives_rotation(db, monke
     assert await rotate() == (0, 1)
     # The ciphertext is untouched, so restoring the old key would still recover it.
     assert (await db.execute(text("SELECT token FROM jira_connection"))).scalar_one() == ciphertext
+
+
+async def test_retention_purges_old_findings_and_expired_sessions(db, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models import AccessToken, Finding, FindingSource
+    from app.services.maintenance import purge_expired_data
+
+    monkeypatch.setenv("FINDING_RETENTION_DAYS", "30")
+    get_settings.cache_clear()
+    now = datetime.now(UTC)
+    user = User(email="a@example.com", hashed_password="x")
+    db.add(user)
+    await db.flush()
+
+    def finding(key: str, age_days: int) -> Finding:
+        return Finding(
+            user_id=user.id, source=FindingSource.UI, cloud_id="c", project_key="SEC", issue_key=key,
+            issue_url=f"https://x/browse/{key}", summary=key, created_at=now - timedelta(days=age_days),
+        )
+
+    db.add_all([finding("SEC-1", 31), finding("SEC-2", 29)])
+    db.add_all([
+        AccessToken(token="expired", user_id=user.id, created_at=now - timedelta(hours=9)),
+        AccessToken(token="current", user_id=user.id, created_at=now - timedelta(hours=1)),
+    ])
+    await db.commit()
+
+    purged = await purge_expired_data(get_settings(), now)
+    assert (purged.findings, purged.sessions) == (1, 1)
+    assert [f.issue_key for f in await db.scalars(select(Finding))] == ["SEC-2"]
+    assert [t.token for t in await db.scalars(select(AccessToken))] == ["current"]
