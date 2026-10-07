@@ -3,6 +3,7 @@ import { AppLayout } from './components/AppLayout'
 import { RequireAuth, RequireGuest } from './components/RouteGuards'
 import { DashboardPage } from './pages/DashboardPage'
 import { LoginPage } from './pages/LoginPage'
+import { RecentTicketsPage } from './pages/RecentTicketsPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 
@@ -21,6 +22,7 @@ export const routes = [
         element: <AppLayout />,
         children: [
           { path: '/', element: <DashboardPage /> },
+          { path: '/recent', element: <RecentTicketsPage /> },
           { path: '/settings', element: <SettingsPage /> },
         ],
       },

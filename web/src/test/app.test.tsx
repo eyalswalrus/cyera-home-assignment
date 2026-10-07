@@ -84,10 +84,9 @@ describe('Jira connection states', () => {
 })
 
 describe('reporting a finding', () => {
-  it('creates a ticket and refreshes the recent list', async () => {
+  it('creates a ticket', async () => {
     let sent: Record<string, unknown> | undefined
     let csrfHeader: string | null = null
-    let recentCalls = 0
     server.use(
       http.post('*/api/findings', async ({ request }) => {
         sent = (await request.json()) as Record<string, unknown>
@@ -96,10 +95,6 @@ describe('reporting a finding', () => {
           { key: 'SEC-3', url: 'https://acme.atlassian.net/browse/SEC-3', summary: sent.summary },
           { status: 201 },
         )
-      }),
-      http.get('*/api/findings/recent', () => {
-        recentCalls += 1
-        return HttpResponse.json([])
       }),
     )
     const { user } = renderApp('/')
@@ -118,7 +113,6 @@ describe('reporting a finding', () => {
       identity_name: 'svc-deploy-prod',
     })
     expect(csrfHeader).toBe('test-token')
-    await waitFor(() => expect(recentCalls).toBe(2)) // initial load + refresh after creating
     expect(screen.getByLabelText(/Title/)).toHaveValue('') // form reset for the next finding
   })
 
@@ -151,8 +145,17 @@ describe('reporting a finding', () => {
     expect(screen.getByLabelText(/Title/)).toHaveValue('Over-privileged key')
   })
 
+  it('has no recent-tickets list: that is its own page', async () => {
+    renderApp('/')
+    expect(await screen.findByRole('heading', { name: 'Report an NHI finding' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Refresh recent tickets' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Newest/)).not.toBeInTheDocument()
+  })
+})
+
+describe('recent tickets', () => {
   it('lists recent tickets as links that open in a new tab', async () => {
-    const { user } = renderApp('/')
+    const { user } = renderApp('/recent')
     await pickProject(user, 'Security (SEC)')
     const link = await screen.findByRole('link', { name: /SEC-2.*Exposed key in CI logs/ })
     expect(link).toHaveAttribute('href', 'https://acme.atlassian.net/browse/SEC-2')
@@ -160,9 +163,15 @@ describe('reporting a finding', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
     expect(within(link).getByText('5 minutes ago')).toBeInTheDocument()
   })
-})
 
-describe('recent tickets', () => {
+  it('keeps the project chosen on the report page', async () => {
+    const { user, router } = renderApp('/')
+    await pickProject(user, 'Security (SEC)')
+    await user.click(screen.getByRole('link', { name: 'Recent tickets' }))
+    expect(router.state.location.pathname).toBe('/recent')
+    expect(await screen.findByRole('link', { name: /SEC-2/ })).toBeInTheDocument()
+  })
+
   it('flags your ticket that was deleted in Jira instead of dropping it', async () => {
     server.use(
       http.get('*/api/findings/recent', () =>
@@ -172,7 +181,7 @@ describe('recent tickets', () => {
         ]),
       ),
     )
-    const { user } = renderApp('/')
+    const { user } = renderApp('/recent')
     await pickProject(user, 'Security (SEC)')
     const deleted = await screen.findByLabelText('SEC-1, deleted in Jira')
     expect(within(deleted).getByText('Deleted in Jira')).toBeInTheDocument()

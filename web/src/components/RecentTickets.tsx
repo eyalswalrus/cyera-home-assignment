@@ -10,12 +10,9 @@ export function RecentTickets({ project }: { project: Project | null }) {
   return (
     <Stack gap="sm">
       <Group justify="space-between" wrap="nowrap">
-        <div>
-          <Text fw={600}>Recent tickets</Text>
-          <Text size="xs" c="dimmed">
-            {project ? `Created from IdentityHub in ${project.name}` : 'Created from IdentityHub'}
-          </Text>
-        </div>
+        <Text size="sm" fw={600}>
+          {project ? `Newest in ${project.name}` : 'Newest tickets'}
+        </Text>
         {project && (
           <Tooltip label="Refresh">
             <ActionIcon
@@ -32,7 +29,7 @@ export function RecentTickets({ project }: { project: Project | null }) {
 
       {!project ? (
         <Text size="sm" c="dimmed">
-          Choose a project in the <strong>Jira project</strong> field to see its recent tickets.
+          Choose a project to see its recent tickets.
         </Text>
       ) : recent.isPending ? (
         <Stack gap="xs">

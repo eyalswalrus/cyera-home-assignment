@@ -1,39 +1,36 @@
-import { Anchor, Paper, Stack, Text, Title } from '@mantine/core'
-import { FindingForm } from '../components/FindingForm'
+import { Paper, Stack, Text, Title } from '@mantine/core'
 import { ProjectPicker } from '../components/ProjectPicker'
+import { RecentTickets } from '../components/RecentTickets'
 import { RequireJira, useRememberedProject } from '../components/RequireJira'
 
-export function DashboardPage() {
+export function RecentTicketsPage() {
   return (
     <RequireJira>
-      {({ site, account_name }) => (
+      {({ site }) => (
         <Stack gap="lg" maw={760}>
           <div>
             <Title order={1} size="h2">
-              Report an NHI finding
+              Recent tickets
             </Title>
             <Text c="dimmed" size="sm">
-              Tickets are created in{' '}
-              <Anchor href={site?.url} target="_blank" rel="noopener noreferrer" inherit>
-                {site?.name}
-              </Anchor>{' '}
-              as {account_name ?? 'you'}.
+              The 10 newest tickets created from IdentityHub in a project: findings and blog digests, from the app and
+              the REST API.
             </Text>
           </div>
-          <ReportFinding cloudId={site?.cloud_id} />
+          <ProjectTickets cloudId={site?.cloud_id} />
         </Stack>
       )}
     </RequireJira>
   )
 }
 
-function ReportFinding({ cloudId }: { cloudId?: string }) {
+function ProjectTickets({ cloudId }: { cloudId?: string }) {
   const [project, setProject] = useRememberedProject(cloudId)
   return (
     <Paper withBorder p="lg">
       <Stack>
         <ProjectPicker value={project} onChange={setProject} />
-        <FindingForm project={project} />
+        <RecentTickets project={project} />
       </Stack>
     </Paper>
   )

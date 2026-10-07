@@ -14,7 +14,7 @@ The reasoning behind every decision, the alternatives considered and the known l
 | Login, logout, secure sessions, concurrent users | Sign in / Create account; server-side sessions, CSRF protection, per-user data isolation (DESIGN §2, §3, §7) |
 | Connect Jira after logon | Settings → Jira connection, OAuth 2.0 (3LO) per user (DESIGN §4) |
 | Choose a project and create an NHI finding ticket | Report finding: searchable project picker, title, description, plus optional finding type, severity and affected identity (DESIGN §5) |
-| 10 most recent tickets created from the app | Report finding → Recent tickets, each opening in Jira in a new tab |
+| 10 most recent tickets created from the app | **Recent tickets** page, each opening in Jira in a new tab |
 | REST API with an API key | `POST /api/v1/findings`; keys with expiry, per-project permissions and notes under Settings → API keys (DESIGN §8) |
 | Bonus: NHI Blog Digest | Settings → NHI Blog Digest; a scheduled job files each new Oasis Security blog post with an AI summary (DESIGN §9) |
 

@@ -336,7 +336,8 @@ react-hook-form + zod for forms, React Router.
 | Page | What it does |
 |---|---|
 | Sign in / Create account | Registration signs the user straight in. Password rules are shown up front, and server-side rejections appear on the password field. |
-| Report finding | Searchable project picker, the finding form, and the 10 recent tickets for the chosen project side by side (stacked on phones). |
+| Report finding | Searchable project picker and the finding form. |
+| Recent tickets | Its own project picker and the 10 newest tickets IdentityHub created there (findings and digests, from the UI and the API). A separate page, so looking up tickets doesn't mean going through the filing form. |
 | Settings | **Jira connection:** connected site and account, reconnect or switch account, disconnect (with confirmation), choose a site, and the outcome of the OAuth redirect. **NHI Blog Digest:** recipient projects, latest ticket or problem per project, and *Send latest post* per project. **API keys:** create (permissions locked once created), one-time reveal, notes, revoke. |
 
 ### Interaction decisions
@@ -346,11 +347,12 @@ react-hook-form + zod for forms, React Router.
   *Reconnect Jira*, or the form. If Jira rejects the token mid-request, the banner switches to
   *Reconnect Jira* without a reload.
 - **Project picker:** searches Jira as you type (debounced), lists only projects you can create
-  issues in, and remembers your last project per user in this browser.
+  issues in, and remembers your last project per user and Jira site in this browser. The report
+  and recent-tickets pages share that memory, so after filing in SEC, *Recent tickets* opens on SEC.
 - **The form** is disabled until a project is chosen, validates instantly with the same limits as
   the server (the server stays the authority), and disables the submit button while sending so a
   double click can't create two tickets. On success it shows the new key with an *Open in Jira*
-  link, clears the fields, keeps the project, and refreshes the recent list. On failure it keeps
+  link, clears the fields, keeps the project, and refreshes the recent-tickets list. On failure it keeps
   everything the user typed and shows the server's message, e.g. "Your Jira account doesn't have
   permission to create issues in SEC."
 - **Recent tickets** open in a new tab (`rel="noopener noreferrer"`), show relative time with the

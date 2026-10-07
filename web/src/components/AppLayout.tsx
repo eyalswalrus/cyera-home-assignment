@@ -6,6 +6,7 @@ import { useLogout, useMe } from '../api/hooks'
 
 const NAV = [
   { to: '/', label: 'Report finding' },
+  { to: '/recent', label: 'Recent tickets' },
   { to: '/settings', label: 'Settings' },
 ]
 
@@ -58,12 +59,11 @@ export function AppLayout() {
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Item hiddenFrom="xs" component={NavLink} to="/">
-                  Report finding
-                </Menu.Item>
-                <Menu.Item hiddenFrom="xs" component={NavLink} to="/settings">
-                  Settings
-                </Menu.Item>
+                {NAV.map((item) => (
+                  <Menu.Item key={item.to} hiddenFrom="xs" component={NavLink} to={item.to}>
+                    {item.label}
+                  </Menu.Item>
+                ))}
                 <Menu.Item leftSection={<IconLogout size={16} />} onClick={signOut} disabled={logout.isPending}>
                   Sign out
                 </Menu.Item>
