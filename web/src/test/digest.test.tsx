@@ -7,6 +7,7 @@ import { server } from './server'
 
 const ready: DigestStatus = {
   configured: true,
+  filed_by: 'bot',
   unavailable_reason: null,
   bot_account: 'IdentityHub',
   site_url: 'https://acme.atlassian.net',
@@ -49,7 +50,7 @@ beforeEach(() => {
 describe('NHI Blog Digest settings', () => {
   it('explains when the server has no digest bot configured', async () => {
     renderApp('/settings')
-    expect(await screen.findByText('Not set up on this server')).toBeInTheDocument()
+    expect(await screen.findByText('Not available on this server')).toBeInTheDocument()
   })
 
   it('shows who files tickets, the summarizer, and each project’s last ticket or problem', async () => {
@@ -64,6 +65,14 @@ describe('NHI Blog Digest settings', () => {
     const ops = screen.getByLabelText('Digest for OPS')
     expect(within(ops).getByText(/bot can no longer create issues in OPS/)).toBeInTheDocument()
     expect(screen.getByText(/Last run .*: filed in SEC/)).toBeInTheDocument()
+  })
+
+  it('explains that tickets are filed with your own connection when no bot is configured', async () => {
+    server.use(http.get('*/api/digest', () => HttpResponse.json({ ...ready, filed_by: 'subscriber', bot_account: null, site_url: null })))
+    renderApp('/settings')
+    expect(await screen.findByText(/No digest bot account is configured/)).toHaveTextContent(
+      "tickets are filed with a subscriber's own Jira connection",
+    )
   })
 
   it('saves the chosen projects', async () => {

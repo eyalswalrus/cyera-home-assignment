@@ -1,5 +1,5 @@
 import { Alert, Anchor, Badge, Button, Checkbox, Group, Paper, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
-import { IconAlertTriangle, IconExternalLink, IconPlayerPlay, IconRobot } from '@tabler/icons-react'
+import { IconAlertTriangle, IconExternalLink, IconPlayerPlay, IconRobot, IconUser } from '@tabler/icons-react'
 import { useState } from 'react'
 import {
   type DigestStatus,
@@ -21,9 +21,8 @@ export function BlogDigestSection() {
   const status = digest.data
   if (!status.configured) {
     return (
-      <Alert color="gray" title="Not set up on this server">
-        An administrator needs to configure the digest bot account (DIGEST_JIRA_* settings, see the README) before
-        projects can receive the digest.
+      <Alert color="gray" title="Not available on this server">
+        The digest files tickets through the Jira integration, which an administrator hasn't configured yet.
       </Alert>
     )
   }
@@ -46,6 +45,24 @@ export function BlogDigestSection() {
 }
 
 function About({ status }: { status: DigestStatus }) {
+  const schedule = (
+    <>
+      Summaries: {status.summarizer ?? 'unknown'}. Runs daily at {status.daily_at_utc} UTC
+      {status.next_run_at && <> (next: {formatDateTime(status.next_run_at)})</>}.
+    </>
+  )
+  if (status.filed_by === 'subscriber') {
+    return (
+      <Group gap="xs" wrap="nowrap" align="flex-start">
+        <IconUser size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+        <Text size="sm">
+          No digest bot account is configured, so tickets are filed with a subscriber's own Jira connection: yours, for
+          projects you're the first to subscribe. An administrator can add a bot account so they're filed as
+          IdentityHub instead. {schedule}
+        </Text>
+      </Group>
+    )
+  }
   const site = status.site_url ? new URL(status.site_url).host : 'Jira'
   return (
     <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -59,8 +76,7 @@ function About({ status }: { status: DigestStatus }) {
         ) : (
           'the digest bot account'
         )}
-        , not by you. Summaries: {status.summarizer ?? 'unknown'}. Runs daily at {status.daily_at_utc} UTC
-        {status.next_run_at && <> (next: {formatDateTime(status.next_run_at)})</>}.
+        , not by you. {schedule}
       </Text>
     </Group>
   )
@@ -84,7 +100,7 @@ function SubscriptionEditor({ status }: { status: DigestStatus }) {
       ) : (
         <ProjectMultiSelect
           label="Projects that receive the digest"
-          description="Only projects that both you and the bot can create issues in are listed. A new subscription receives posts published after you subscribe."
+          description={`Only projects ${status.filed_by === 'bot' ? 'both you and the bot' : 'you'} can create issues in are listed. A new subscription receives posts published after you subscribe.`}
           source="digest"
           maxValues={20}
           value={projects}

@@ -1343,7 +1343,17 @@
         "properties": {
           "configured": {
             "type": "boolean",
-            "title": "Configured"
+            "title": "Configured",
+            "description": "The digest can run (the Jira integration is configured)"
+          },
+          "filed_by": {
+            "type": "string",
+            "enum": [
+              "bot",
+              "subscriber"
+            ],
+            "title": "Filed By",
+            "description": "Who files the tickets: the digest bot account, or (no bot configured) a subscriber's own Jira connection"
           },
           "unavailable_reason": {
             "anyOf": [
@@ -1432,6 +1442,7 @@
         "type": "object",
         "required": [
           "configured",
+          "filed_by",
           "unavailable_reason",
           "bot_account",
           "site_url",
@@ -1599,16 +1610,16 @@
             "type": "boolean",
             "title": "Jira Configured"
           },
-          "digest_configured": {
+          "digest_bot_configured": {
             "type": "boolean",
-            "title": "Digest Configured"
+            "title": "Digest Bot Configured"
           }
         },
         "type": "object",
         "required": [
           "status",
           "jira_configured",
-          "digest_configured"
+          "digest_bot_configured"
         ],
         "title": "HealthResponse"
       },

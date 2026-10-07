@@ -114,21 +114,29 @@ Interactive documentation for every endpoint and error is at http://localhost:80
 ## Bonus: NHI Blog Digest
 
 New posts on the [Oasis Security blog](https://www.oasis.security/blog) are summarized and filed
-as Jira tickets in the projects users choose under **Settings → NHI Blog Digest**. To enable it:
+as Jira tickets in the projects users choose under **Settings → NHI Blog Digest**. It works as soon
+as Jira is connected; two optional settings improve it:
 
-1. Create a dedicated Atlassian account for the bot (e.g. "IdentityHub"; Jira's free plan allows
-   10 users), give it *Create Issues* in the projects that may receive the digest, and create an
-   [API token](https://id.atlassian.com/manage-profile/security/api-tokens) for it.
-2. In `.env`, set `DIGEST_JIRA_SITE_URL`, `DIGEST_JIRA_EMAIL` and `DIGEST_JIRA_API_TOKEN`.
-3. Choose who writes the summaries (automatic, first available wins):
-   - **Claude:** set `ANTHROPIC_API_KEY`.
-   - **Free local model:** start Ollama alongside the app (downloads ~2 GB on first run):
+- **Who files the tickets.** By default, the subscriber's own Jira connection, and tickets say so.
+  To file them as an "IdentityHub" bot instead: create a dedicated Atlassian account (Jira's free
+  plan allows 10 users), give it *Create Issues* in the projects that may receive the digest,
+  create an [API token](https://id.atlassian.com/manage-profile/security/api-tokens) for it, and set
+  `DIGEST_JIRA_SITE_URL`, `DIGEST_JIRA_EMAIL` and `DIGEST_JIRA_API_TOKEN` in `.env`.
+- **Who writes the summaries** (automatic, first available wins):
+  - **Claude:** set `ANTHROPIC_API_KEY`.
+  - **Free local model:** start Ollama (downloads ~2 GB on first run). With the app in Docker:
 
-     ```bash
-     docker compose --profile llm up -d --build
-     ```
+    ```bash
+    docker compose --profile llm up -d --build
+    ```
 
-   - **Nothing:** a built-in extractive summary is used, and tickets say so.
+    Or just the model, for a server you run yourself:
+
+    ```bash
+    docker compose --profile llm up -d ollama
+    ```
+
+  - **Nothing:** a built-in extractive summary is used, and tickets say so.
 
 The digest runs daily at 09:00 UTC (`DIGEST_DAILY_AT`) and once shortly after startup; **Run now**
 in Settings runs it on demand. Each post is summarized once and stored. A new subscription receives

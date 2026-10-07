@@ -44,6 +44,7 @@ export const handlers = [
   http.get('*/api/digest', () =>
     HttpResponse.json({
       configured: false,
+      filed_by: 'subscriber',
       unavailable_reason: 'not set up',
       bot_account: null,
       site_url: null,

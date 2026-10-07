@@ -129,9 +129,8 @@ class Finding(Base):
 class DigestSubscription(Base):
     """A user asking for the NHI Blog Digest to be filed in one Jira project.
 
-    Tickets are filed by the digest bot account, not the user, but a subscription only counts
-    while its user can still create issues in the project themselves; otherwise the bot would let
-    users post into projects they can't access.
+    A subscription only counts while its user can still create issues in the project themselves;
+    otherwise the digest bot would let users post into projects they can't access.
     """
 
     __tablename__ = "digest_subscription"
@@ -139,6 +138,9 @@ class DigestSubscription(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = _user_fk()
+    # The Jira site the project lives on (e.g. https://acme.atlassian.net). Project keys are only
+    # unique within a site, and without a bot account subscribers may be on different sites.
+    site_url: Mapped[str] = mapped_column(String(255), nullable=False)
     project_key: Mapped[str] = mapped_column(String(32), nullable=False)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # "Also send the latest post now": the newest post published before subscribing is due too,
@@ -166,16 +168,20 @@ class DigestPost(Base):
 
 
 class DigestDelivery(Base):
-    """One digest ticket: a post filed in a project. Unique per (post, project), so however many
-    users subscribe a project, and however often the job runs, each post is filed there once."""
+    """One digest ticket: a post filed in a project. Unique per (post, site, project), so however
+    many users subscribe a project, and however often the job runs, each post is filed there once."""
 
     __tablename__ = "digest_delivery"
-    __table_args__ = (UniqueConstraint("post_id", "project_key"),)
+    __table_args__ = (UniqueConstraint("post_id", "site_url", "project_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
     post_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("digest_post.id", ondelete="cascade"), nullable=False)
     post: Mapped[DigestPost] = relationship(lazy="joined")
+    site_url: Mapped[str] = mapped_column(String(255), nullable=False)
     project_key: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     issue_key: Mapped[str] = mapped_column(String(64), nullable=False)
     issue_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Who filed it: None for the digest bot, otherwise the subscriber whose Jira connection was
+    # used (the fallback when no bot account is configured).
+    filed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(GUID, ForeignKey("user.id", ondelete="set null"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)

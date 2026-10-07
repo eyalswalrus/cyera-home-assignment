@@ -107,16 +107,84 @@ def bot_issue_requests(jira):
 # --- Availability and subscriptions -----------------------------------------------------------
 
 
-async def test_not_configured(client, atlassian, monkeypatch):
+async def test_not_configured_without_jira(client, atlassian, monkeypatch):
+    from app.core.config import get_settings
+
+    await connected_user(client)
+    for name in ("ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET", "DIGEST_JIRA_SITE_URL", "DIGEST_JIRA_EMAIL", "DIGEST_JIRA_API_TOKEN"):
+        monkeypatch.delenv(name)
+    get_settings.cache_clear()
+    status = (await client.get("/api/digest")).json()
+    assert status["configured"] is False
+    assert "Jira integration isn't configured" in status["unavailable_reason"]
+
+
+# --- Without a bot account: filed with a subscriber's own Jira connection ----------------------
+
+
+@pytest.fixture
+def no_bot(monkeypatch):
     from app.core.config import get_settings
 
     for name in ("DIGEST_JIRA_SITE_URL", "DIGEST_JIRA_EMAIL", "DIGEST_JIRA_API_TOKEN"):
         monkeypatch.delenv(name)
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def user_jira_writes(jira):
+    jira.jira.get(re.compile(rf"{re.escape(JIRA_API)}/issue/createmeta/\w+/issuetypes"), json={"issueTypes": [{"id": "3", "name": "Task"}]})
+    jira.jira.post(f"{JIRA_API}/issue", json={"id": "7", "key": "SEC-7"}, status=201)
+    return jira
+
+
+def user_issue_requests(jira):
+    return [c.request for c in jira.jira.calls if c.request.method == "POST" and c.request.url == f"{JIRA_API}/issue"]
+
+
+async def test_without_bot_offers_all_the_users_projects(app, client, jira, no_bot):
     await connected_user(client)
     status = (await client.get("/api/digest")).json()
-    assert status["configured"] is False
-    assert "hasn't been set up" in status["unavailable_reason"]
+    assert status["configured"] and status["unavailable_reason"] is None
+    assert status["filed_by"] == "subscriber" and status["bot_account"] is None
+    assert [p["key"] for p in (await client.get("/api/digest/projects")).json()] == ["SEC", "PLAT", "OPS"]
+    assert not any(c.request.url.startswith(BOT_API) for c in jira.jira.calls)  # no bot calls at all
+
+
+async def test_without_bot_files_with_the_subscribers_connection(app, client, user_jira_writes, no_bot, db):
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    await backdate_subscriptions(db, 30)
+
+    assert (await run(app)).outcome == "filed 2 tickets in SEC"
+    requests = user_issue_requests(user_jira_writes)
+    assert len(requests) == 2 and bot_issue_requests(user_jira_writes) == []
+    assert requests[0].headers["Authorization"] == "Bearer access-1"  # the user's OAuth token
+    description = json.dumps(json.loads(requests[-1].body)["fields"]["description"])
+    assert "using Alice Atlassian's Jira connection, because no digest bot account is configured" in description
+
+    from app.db.models import User
+
+    alice = await db.scalar(select(User).where(User.email == "alice@example.com"))
+    deliveries = (await db.scalars(select(DigestDelivery))).all()
+    assert {d.filed_by_user_id for d in deliveries} == {alice.id}
+    assert {d.site_url for d in deliveries} == {"https://acme.atlassian.net"}
+
+
+async def test_without_bot_one_ticket_per_project_filed_by_the_earliest_subscriber(app, client, user_jira_writes, no_bot, db):
+    from app.db.models import User
+
+    await connected_user(client)
+    await subscribe(client, ["SEC"])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as bob:
+        await connected_user(bob, "bob@example.com")
+        await subscribe(bob, ["SEC"])
+    await backdate_subscriptions(db, 30)
+
+    await run(app)
+    assert len(user_issue_requests(user_jira_writes)) == 2  # two posts, once each, not once per subscriber
+    alice = await db.scalar(select(User).where(User.email == "alice@example.com"))
+    assert {d.filed_by_user_id for d in await db.scalars(select(DigestDelivery))} == {alice.id}
 
 
 async def test_status_names_bot_and_summarizer(app, client, jira):

@@ -500,19 +500,33 @@ title and the summary, in every project users have subscribed to the digest.
 
 | | Configured by | Where |
 |---|---|---|
-| The **bot account** that files tickets, and the **summarizer** (Claude key / local model) | The deployer, once | `.env`, like the Atlassian OAuth secrets |
+| The **bot account** that files tickets (optional), and the **summarizer** (Claude key / local model) | The deployer, once | `.env`, like the Atlassian OAuth secrets |
 | **Which projects** receive the digest | Each user, for projects they work in | Settings → NHI Blog Digest |
 
 The automation itself has no UI, as the brief specifies: it is a scheduled job inside the server.
 The Settings section only lets users choose recipient projects and see what happened (last ticket
 per project, errors, last run, and a *Run now* button for demos).
 
-### The bot account
+### Who files the tickets
 
-- **Tickets come from IdentityHub, not from a person.** A 3LO OAuth app always acts as the user who
-  authorized it; there is no "app user" to attribute a ticket to (only Forge or Connect apps have
-  one, a different distribution model, section 3). So a dedicated Atlassian account named e.g.
-  "IdentityHub" files the tickets, authenticated with an API token set at deploy time.
+| | Bot account configured (`DIGEST_JIRA_*`) | No bot account (fallback) |
+|---|---|---|
+| Ticket created by | The "IdentityHub" bot account | The project's earliest subscriber who still has access, through their own Jira connection |
+| Projects offered | Those both the user and the bot can create issues in | Those the user can create issues in |
+| Ticket footer | "Filed by IdentityHub's NHI Blog Digest" | "…using *Alice*'s Jira connection, because no digest bot account is configured" |
+
+- **Why a bot.** A 3LO OAuth app always acts as the user who authorized it; there is no "app user"
+  to attribute a ticket to (only Forge or Connect apps have one, section 3). So a dedicated
+  Atlassian account named e.g. "IdentityHub" files the tickets, authenticated with an API token set
+  at deploy time.
+- **Why the fallback exists.** A reviewer may not want to create a second Atlassian account and an
+  API token just to try the bonus. Without a bot, the digest still works using the subscriber's
+  existing OAuth connection, says so in the UI and on every ticket, and the bot stays the
+  recommended setup. It is still safe: tickets only go into projects that subscriber can create
+  issues in, re-checked on every run.
+- **Projects are identified by site and key.** Without a bot, subscribers may be connected to
+  different Jira sites, and project keys are only unique within a site, so subscriptions and
+  deliveries record the site (`site_url`) as well as the key.
 - **The bot can't widen anyone's access.**
   - The picker only offers projects that **both** the user and the bot can create issues in.
   - Subscribing is re-validated on the server.
@@ -526,8 +540,6 @@ per project, errors, last run, and a *Run now* button for demos).
   - Each failure has its own message: wrong site URL, rejected credentials, Jira unreachable, or
     "the bot can no longer create issues in OPS. Ask a Jira admin to grant it access."
 - **One site.** The bot works on one Jira site; users connected to a different site are told so.
-- **Production:** Atlassian's dedicated service accounts and scoped API tokens, where available on
-  the plan, would narrow the bot further. The bot uses a seat; Jira's free plan allows 10 users.
 
 ### The run
 
@@ -583,9 +595,37 @@ default `auto`), with the first available option winning:
 Free hosted tiers (Gemini, Groq, OpenRouter, ...) were considered but still need a sign-up and
 key, and their terms change often.
 
+The `ollama` Compose service publishes its port on `127.0.0.1` only, so a server run outside
+Docker can use the model too (`docker compose --profile llm up -d ollama`).
+
 **The blog is untrusted input.** The article is fenced in `<article>` tags, and the prompt says to
 treat it as content, never as instructions. The model has no tools and its output only becomes
 ticket text, so a prompt injection in a post could at worst produce a misleading summary.
+
+### In a production setting
+
+The fallbacks above exist to keep this POC runnable on a laptop with one Atlassian account and no
+paid keys. A production deployment would remove them:
+
+- **Always a service identity, never a person.** No fallback to a subscriber's account: automation
+  reported as a person is misleading in Jira, and it stops working when that person leaves. The
+  identity would be one of:
+  - a **Forge app** calling Jira `asApp()`, the only true app identity: installed by each customer's
+    site admin, with its permissions defined by the app's scopes;
+  - an **Atlassian service account** from Atlassian Administration, where available on the plan,
+    with a scoped API token or OAuth client credentials, granted *Create Issues* only on the
+    digest projects.
+- **Per customer, not per deployment.** With organizations (section 2), each customer org has its
+  own bot identity and site. Credentials live in a secrets manager with rotation, not in `.env`.
+- **A hosted model behind the company's AI gateway**, not a laptop CPU model: e.g. Claude directly
+  or through Bedrock or Vertex, with the data-handling terms the company already has, plus cost and
+  rate controls. If self-hosting is required, a GPU inference service (e.g. vLLM) behind the same
+  gateway. The extractive summary stays only as a degradation path, and summary quality is checked
+  with a small evaluation set before changing models or prompts.
+- **A scheduler outside the web process:** a cron job or worker (e.g. a Kubernetes CronJob) with a
+  distributed lock, retries, and alerting on failed runs, instead of a task inside one app replica.
+- **A feed contract for the source.** Scraping HTML and JSON-LD is brittle; production would ask
+  for RSS or an API, and alert when parsing finds no posts.
 
 ---
 
@@ -619,6 +659,8 @@ ticket text, so a prompt injection in a post could at worst produce a misleading
 - **No idempotency on create:** a retried request creates a second ticket. The UI disables the button
   while submitting; the API could accept an `Idempotency-Key` header.
 - **API-key rate limits are in memory** (single process), like the login limit.
+- **Digest fallbacks are POC conveniences:** filing with a subscriber's account, a local CPU model,
+  extractive summaries (section 9, *In a production setting*).
 - **The digest scheduler runs in-process,** with its last-run status in memory (summaries and
   deliveries are in the database). With several replicas, run it in one (a leader lock, or a
   separate cron job calling the same function).

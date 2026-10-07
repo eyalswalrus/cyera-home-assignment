@@ -532,8 +532,17 @@ export interface components {
         };
         /** DigestStatus */
         DigestStatus: {
-            /** Configured */
+            /**
+             * Configured
+             * @description The digest can run (the Jira integration is configured)
+             */
             configured: boolean;
+            /**
+             * Filed By
+             * @description Who files the tickets: the digest bot account, or (no bot configured) a subscriber's own Jira connection
+             * @enum {string}
+             */
+            filed_by: "bot" | "subscriber";
             /**
              * Unavailable Reason
              * @description Why the user can't manage subscriptions right now
@@ -621,8 +630,8 @@ export interface components {
             status: string;
             /** Jira Configured */
             jira_configured: boolean;
-            /** Digest Configured */
-            digest_configured: boolean;
+            /** Digest Bot Configured */
+            digest_bot_configured: boolean;
         };
         /** LastRunOut */
         LastRunOut: {

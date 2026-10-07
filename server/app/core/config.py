@@ -37,8 +37,9 @@ class Settings(BaseSettings):
     atlassian_client_secret: SecretStr | None = None
 
     # --- NHI Blog Digest -------------------------------------------------------------------------
-    # The Jira account that files digest tickets (a dedicated "IdentityHub" bot user), authenticated
-    # with an Atlassian API token. The digest is disabled unless all three are set.
+    # Optional Jira account that files digest tickets (a dedicated "IdentityHub" bot user),
+    # authenticated with an Atlassian API token. Without it, tickets are filed with a subscriber's
+    # own Jira connection.
     digest_jira_site_url: str | None = None  # e.g. https://acme.atlassian.net
     digest_jira_email: str | None = None
     digest_jira_api_token: SecretStr | None = None
@@ -78,7 +79,7 @@ class Settings(BaseSettings):
         return bool(self.atlassian_client_id and self.atlassian_client_secret)
 
     @property
-    def digest_configured(self) -> bool:
+    def digest_bot_configured(self) -> bool:
         return bool(self.digest_jira_site_url and self.digest_jira_email and self.digest_jira_api_token)
 
 

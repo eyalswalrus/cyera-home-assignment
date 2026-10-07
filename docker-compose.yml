@@ -14,12 +14,16 @@ services:
     restart: unless-stopped
 
   # Optional free local LLM for the NHI Blog Digest summaries:
-  #   docker compose --profile llm up -d
+  #   docker compose --profile llm up -d           (app + model)
+  #   docker compose --profile llm up -d ollama    (just the model, for a locally run server)
   # Downloads the model (~2 GB for llama3.2:3b) on first start. Without it, the digest uses Claude
   # (if ANTHROPIC_API_KEY is set) or a built-in extractive summary.
   ollama:
     image: ollama/ollama:latest
     profiles: ["llm"]
+    # Localhost only, so a server run outside Docker (uv run uvicorn ...) can use the model too.
+    ports:
+      - "127.0.0.1:11434:11434"
     environment:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
     entrypoint:

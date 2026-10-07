@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -48,7 +48,10 @@ class LastRunOut(BaseModel):
 
 
 class DigestStatus(BaseModel):
-    configured: bool
+    configured: bool = Field(description="The digest can run (the Jira integration is configured)")
+    filed_by: Literal["bot", "subscriber"] = Field(
+        description="Who files the tickets: the digest bot account, or (no bot configured) a subscriber's own Jira connection"
+    )
     unavailable_reason: str | None = Field(description="Why the user can't manage subscriptions right now")
     bot_account: str | None
     site_url: str | None
@@ -69,19 +72,20 @@ async def get_status(
     settings = get_settings()
     reason = await digest.unavailable_reason(db, user, settings, runtime)
     try:
-        summarizer = (await choose_summarizer(settings)).description if settings.digest_configured else None
+        summarizer = (await choose_summarizer(settings)).description if settings.jira_configured else None
     except SummaryError as exc:
         summarizer = f"misconfigured: {exc}"
     subs = await digest.list_subscriptions(db, user)
     last = runtime.last_run
     return DigestStatus(
-        configured=settings.digest_configured,
+        configured=settings.jira_configured,
+        filed_by="bot" if settings.digest_bot_configured else "subscriber",
         unavailable_reason=reason,
-        bot_account=runtime.bot_account,
-        site_url=settings.digest_jira_site_url,
+        bot_account=runtime.bot_account if settings.digest_bot_configured else None,
+        site_url=settings.digest_jira_site_url if settings.digest_bot_configured else None,
         summarizer=summarizer,
         daily_at_utc=settings.digest_daily_at,
-        next_run_at=digest.next_run_at(settings.digest_daily_at, datetime.now(UTC)) if settings.digest_configured else None,
+        next_run_at=digest.next_run_at(settings.digest_daily_at, datetime.now(UTC)) if settings.jira_configured else None,
         running=runtime.running,
         last_run=LastRunOut(**last.__dict__) if last else None,
         subscriptions=[
@@ -157,8 +161,8 @@ def _start_run(settings: Settings, runtime: DigestRuntime) -> bool:
 )
 async def run_now(user: User = Depends(current_active_user), runtime: DigestRuntime = Depends(_runtime)) -> dict:
     settings = get_settings()
-    if not settings.digest_configured:
-        raise digest.DigestUnavailable("The blog digest hasn't been set up on this server.")
+    if not settings.jira_configured:
+        raise digest.DigestUnavailable("The Jira integration isn't configured on this server.")
     # Already-filed posts are skipped per project, so running again never duplicates tickets.
     if not _start_run(settings, runtime):
         raise digest.DigestAlreadyRunning()

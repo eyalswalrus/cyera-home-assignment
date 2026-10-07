@@ -41,7 +41,7 @@ class SPAStaticFiles(StaticFiles):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     settings = get_settings()
-    scheduler = asyncio.create_task(schedule(settings, app.state.digest)) if settings.digest_configured else None
+    scheduler = asyncio.create_task(schedule(settings, app.state.digest)) if settings.jira_configured else None
     yield
     if scheduler:
         scheduler.cancel()
